@@ -1,0 +1,7 @@
+*.mp4
+*.mkv
+*.TTF
+/.venv/
+.idea
+*.wav
+user_config.json

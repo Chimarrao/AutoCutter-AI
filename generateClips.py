@@ -7,11 +7,8 @@ import json
 import whisper
 import requests
 import argparse
-import time
 import textwrap
-from typing import List, Dict, Any
 import google.generativeai as genai
-from collections import deque
 
 # Opções de API LLM gratuitas - usaremos a API Google Gemini com limite de uso para o plano gratuito
 # Alternativas incluem a HuggingFace Inference API ou outros serviços gratuitos
@@ -19,8 +16,7 @@ from collections import deque
 class LLMClipFinder:
     """Classe para lidar com chamadas à API LLM para identificar trechos interessantes"""
 
-    def __init__(self, api_key=None, model="gemini-1.5-flash"):
-        """Inicializa com uma chave de API opcional (para o Google Gemini)"""
+    def __init__(self, api_key=None, model="gemini-2.0-flash"):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model_name = model
 
@@ -29,7 +25,6 @@ class LLMClipFinder:
             self.use_gemini = False
             return
             
-        # Configura o cliente da API Gemini
         try:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
@@ -56,8 +51,8 @@ Aqui está uma transcrição com carimbos de tempo:
 
 {transcript_text}
 
-Por favor, identifique de {min_clips} a {max_clips} momentos que seriam ótimos para clipes curtos (45-60 segundos cada). Foque em:
-0. Precisamos de vídeos para o youtube shorts, instagram reels e tiktok (precisam chamar atenção rapidamente)
+Por favor, identifique de {min_clips} a {max_clips} momentos que seriam ótimos para clipes (45-600 segundos cada). Foque em:
+0. SE FOREM MENORES DE 60 SEC = Precisamos de vídeos para o youtube shorts, instagram reels e tiktok (precisam chamar atenção rapidamente) OU SE FOREM MOMENTOS MAIORES DE 60 SEGUNDOS, SÃO VIDEOS PARA YOUTUBE
 1. Declarações ou histórias interessantes
 2. Momentos emocionais
 3. Revelações ou insights surpreendentes
@@ -106,7 +101,7 @@ Formate sua resposta como JSON com esta estrutura:
                 
         except Exception as e:
             print(f"Erro ao chamar a API Gemini: {str(e)}")
-            return self._fallback_extraction(self.transcription_segments)
+            return self._fallback_extraction([])  # Passa uma lista vazia como fallback
     def _manually_extract_clips(self, content):
         """Extrai informações do clipe manualmente se a análise do JSON falhar"""
         clips = []
@@ -372,15 +367,15 @@ def review_clips(clips, transcription_segments):
                                 print(f"Segmento [{seg_idx}] atualizado")
 
                                 # Atualiza text_lines também, se existirem
-                                if 'text_lines' in transcription_segments[transIdx]:
+                                if 'text_lines' in transcription_segments[trans_idx]:
                                     # Cria uma representação melhor em nível de palavra
                                     words = new_text.split()
-                                    seg_duration = transcription_segments[transIdx]["end"] - transcription_segments[transIdx]["start"]
+                                    seg_duration = transcription_segments[trans_idx]["end"] - transcription_segments[trans_idx]["start"]
                                     word_duration = seg_duration / len(words) if words else 0
                                     
                                     new_words = []
                                     for i, word in enumerate(words):
-                                        word_start = transcription_segments[transIdx]["start"] + (i * word_duration)
+                                        word_start = transcription_segments[trans_idx]["start"] + (i * word_duration)
                                         word_end = word_start + word_duration
                                         new_words.append({
                                             "word": word,
@@ -389,7 +384,7 @@ def review_clips(clips, transcription_segments):
                                         })
                                     
                                     # Atualiza as palavras no segmento
-                                    transcription_segments[transIdx]['words'] = new_words
+                                    transcription_segments[trans_idx]['words'] = new_words
 
                                     # Atualiza text_lines com palavras distribuídas uniformemente
                                     lines = textwrap.wrap(new_text, width=40)  # Quebra de linha básica
@@ -398,7 +393,7 @@ def review_clips(clips, transcription_segments):
                                     
                                     new_text_lines = []
                                     for i, line in enumerate(lines):
-                                        line_start = transcription_segments[transIdx]["start"] + (i * line_duration)
+                                        line_start = transcription_segments[trans_idx]["start"] + (i * line_duration)
                                         line_end = line_start + line_duration
                                         new_text_lines.append({
                                             "text": line,
@@ -406,7 +401,7 @@ def review_clips(clips, transcription_segments):
                                             "end": line_end
                                         })
     
-                                        transcription_segments[transIdx]['text_lines'] = new_text_lines
+                                    transcription_segments[trans_idx]['text_lines'] = new_text_lines
                     else:
                         try:
                             seg_idx = int(seg_to_edit)
@@ -529,7 +524,7 @@ def draw_rounded_rectangle(draw, bbox, radius, fill):
 
 def create_clip(video_path, clip, output_path, bg_color=(255, 255, 255, 230),
                 highlight_color=(255, 226, 165, 220), text_color=(0, 0, 0)):
-    """Cria um clipe de vídeo (sem legendas)"""
+    """Cria um clipe de vídeo (sem legendas) preservando o áudio"""
     # Converte timestamps para segundos
     start_time = parse_timestamp(clip["start"])
     end_time = parse_timestamp(clip["end"])
@@ -545,54 +540,22 @@ def create_clip(video_path, clip, output_path, bg_color=(255, 255, 255, 230),
     output_dir = os.path.dirname(output_path)
     output_path = os.path.join(output_dir, f"{base_name}.mp4")
     
-    # Extrai o clipe do vídeo original com FFmpeg
-    temp_video = f"{output_path}_temp.mp4"
-    extract_cmd = f"ffmpeg -ss {start_time} -i {video_path} -t {duration} -c:v copy -c:a copy {temp_video} -y"
-    print(f"Extraindo clipe: {extract_cmd}")
-    subprocess.call(extract_cmd, shell=True)
-    
-    # Agora abre o segmento extraído
-    cap = cv2.VideoCapture(temp_video)
-    
-    # Obtém propriedades do vídeo
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    # Define dimensões de saída (proporção 9:16 para Instagram)
-    target_width = 1080
-    target_height = 1920
-    
-    # Configura o gravador de vídeo
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Codec H.264
-    out = cv2.VideoWriter(f"{output_path}_processed.mp4", fourcc, fps, (target_width, target_height))
-    
-    if not out.isOpened():
-        print("Falha ao abrir o gravador de vídeo com o codec H.264. Tentando MPEG-4...")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(f"{output_path}_processed.mp4", fourcc, fps, (target_width, target_height))
-        
-        if not out.isOpened():
-            print("Não foi possível abrir o gravador de vídeo com nenhum dos codecs. Verifique sua instalação do OpenCV.")
-            return None
-    
-    # Processamento de frames sem legendas
-    frame_idx = 0
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        # Redimensiona para 9:16
-        frame = cv2.resize(frame, (target_width, target_height))
-        out.write(frame)
-        frame_idx += 1
-    cap.release()
-    out.release()
-    os.remove(temp_video)
-    final_output = f"{output_path}_processed.mp4"
-    os.rename(final_output, output_path)
-    print(f"Clipes salvos em {output_path}")
+    # Extrai o clipe do vídeo original com FFmpeg preservando áudio e vídeo
+    # Usando -c copy para manter qualidade original e áudio
+    extract_cmd = [
+        "ffmpeg", "-ss", str(start_time), "-i", video_path,
+        "-t", str(duration), "-c", "copy", "-avoid_negative_ts", "make_zero",
+        output_path, "-y"
+    ]
+
+    print(f"Extraindo clipe: {' '.join(extract_cmd)}")
+    result = subprocess.run(extract_cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Erro ao extrair clipe: {result.stderr}")
+        return None
+
+    print(f"Clipe salvo em {output_path}")
     return output_path
 
 

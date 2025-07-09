@@ -8,7 +8,7 @@ if [ ! -x "$FFPROBE" ]; then
   exit 1
 fi
 
-for f in output_folder/*_temp.mp4; do
+for f in output_folder/*.mp4; do
   filename=$(basename "$f")
   name="${filename%_temp.mp4}"
 

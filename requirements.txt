@@ -1,7 +1,11 @@
 customtkinter>=5.2.0
-Pillow>=9.0.0
+moviepy>=1.0.3
+configparser
+pathlib
+openai-whisper
+google-generativeai
 opencv-python
+pillow
 numpy
-moviepy
-whisper
-textwrap3
+ffmpeg-python
+asyncio

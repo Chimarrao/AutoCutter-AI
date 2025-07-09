@@ -5,9 +5,9 @@ import subprocess
 import threading
 import os
 import json
-from pathlib import Path
 import queue
-import time
+import tempfile
+import re
 
 class ClipGeneratorGUI:
     def __init__(self):
@@ -33,15 +33,23 @@ class ClipGeneratorGUI:
         # Configurar estilos personalizados
         self.setup_styles()
 
+        # Arquivo de configuração
+        self.config_file = os.path.join(os.path.dirname(__file__), 'user_config.json')
+        
+        # Carregar configurações salvas
+        self.load_config()
+
         # Variáveis
         self.video_path = tk.StringVar()
         self.output_dir = tk.StringVar(value="output_folder")
         self.min_clips = tk.IntVar(value=3)
         self.max_clips = tk.IntVar(value=8)
         self.whisper_model = tk.StringVar(value="base")
-        self.api_key = tk.StringVar(value="")
+        self.api_key = tk.StringVar(value=self.saved_api_key)  # Carregar chave salva
         self.captions = tk.BooleanVar(value=True)
         self.no_review = tk.BooleanVar(value=True)
+        self.max_segment_duration = tk.IntVar(value=30)  # Nova variável para duração máxima
+        self.temp_dir = tk.StringVar(value=os.path.join(tempfile.gettempdir(), "video_segments"))
 
         # Fila para comunicação entre threads
         self.output_queue = queue.Queue()
@@ -50,6 +58,28 @@ class ClipGeneratorGUI:
 
         self.setup_ui()
         self.check_queue()
+
+    def load_config(self):
+        """Carregar configurações do usuário"""
+        self.saved_api_key = ""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    self.saved_api_key = config.get('api_key', '')
+        except Exception as e:
+            print(f"Erro ao carregar configurações: {e}")
+
+    def save_config(self):
+        """Salvar configurações do usuário"""
+        try:
+            config = {
+                'api_key': self.api_key.get()
+            }
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Erro ao salvar configurações: {e}")
 
     def setup_styles(self):
         # Configurar estilos ttk
@@ -270,6 +300,45 @@ class ClipGeneratorGUI:
         )
         self.no_review_checkbox.pack(anchor="w", padx=10, pady=(5, 10))
 
+        # Duração máxima do segmento
+        duration_frame = ttk.LabelFrame(scrollable_frame, text="⏱️ Duração Máxima do Segmento", style='Custom.TFrame')
+        duration_frame.pack(fill="x", padx=20, pady=10)
+
+        ttk.Label(duration_frame, text="Duração máxima de cada segmento em minutos:", style='Custom.TLabel').pack(anchor="w", padx=10, pady=(5, 0))
+
+        duration_spinbox = tk.Spinbox(
+            duration_frame,
+            from_=1,
+            to=300,
+            textvariable=self.max_segment_duration,
+            width=10,
+            bg=self.entry_color,
+            fg=self.fg_color,
+            insertbackground=self.fg_color
+        )
+        duration_spinbox.pack(side="left", padx=10, pady=10)
+
+        # Pasta temporária
+        temp_frame = ttk.LabelFrame(scrollable_frame, text="📂 Pasta Temporária", style='Custom.TFrame')
+        temp_frame.pack(fill="x", padx=20, pady=10)
+
+        ttk.Label(temp_frame, text="Pasta onde os segmentos de vídeo serão armazenados temporariamente:", style='Custom.TLabel').pack(anchor="w", padx=10, pady=(5, 0))
+
+        temp_entry = ttk.Entry(
+            temp_frame,
+            textvariable=self.temp_dir,
+            style='Custom.TEntry',
+            width=50
+        )
+        temp_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        ttk.Button(
+            temp_frame,
+            text="📂 Navegar",
+            command=self.browse_temp,
+            style='Custom.TButton'
+        ).pack(side="right", padx=(5, 0), ipadx=10)
+
     def setup_processing_tab(self):
         # Frame da aba de processamento
         processing_frame = ttk.Frame(self.notebook, style='Custom.TFrame')
@@ -337,6 +406,11 @@ class ClipGeneratorGUI:
         if dirname:
             self.output_dir.set(dirname)
 
+    def browse_temp(self):
+        dirname = filedialog.askdirectory(title="Selecionar Pasta Temporária")
+        if dirname:
+            self.temp_dir.set(dirname)
+
     def validate_inputs(self):
         if not self.video_path.get():
             messagebox.showerror("Erro", "Por favor, selecione um arquivo de vídeo!")
@@ -361,6 +435,10 @@ class ClipGeneratorGUI:
         if not self.api_key.get():
             messagebox.showwarning("Aviso", "Nenhuma chave API fornecida. O sistema usará métodos alternativos.")
 
+        if not os.path.exists(self.temp_dir.get()):
+            messagebox.showerror("Erro", "A pasta temporária não existe!")
+            return False
+
         return True
 
     def start_processing(self):
@@ -370,6 +448,10 @@ class ClipGeneratorGUI:
         if self.is_processing:
             messagebox.showwarning("Aviso", "Já existe um processamento em andamento!")
             return
+
+        # Salvar a chave API se fornecida
+        if self.api_key.get():
+            self.save_config()
 
         self.is_processing = True
         self.process_button.configure(state="disabled")
@@ -391,66 +473,193 @@ class ClipGeneratorGUI:
             self.output_queue.put(("status", "Processamento interrompido pelo usuário"))
             self.output_queue.put(("finished", False))
 
+    def get_video_duration(self, video_path):
+        """Obter duração do vídeo em minutos usando ffprobe"""
+        try:
+            cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", video_path]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                duration_seconds = float(result.stdout.strip())
+                return duration_seconds / 60  # Converter para minutos
+            return 0
+        except Exception as e:
+            print(f"Erro ao obter duração do vídeo: {e}")
+            return 0
+
+    def split_video_into_segments(self, video_path, segment_duration_minutes, temp_dir):
+        """Dividir vídeo em segmentos de duração específica"""
+        segments = []
+        try:
+            # Converter duração para segundos
+            segment_duration_seconds = segment_duration_minutes * 60
+
+            # Obter duração total do vídeo
+            total_duration = self.get_video_duration(video_path) * 60  # Em segundos
+
+            if total_duration <= segment_duration_seconds:
+                # Vídeo não precisa ser dividido
+                return [video_path]
+
+            self.output_queue.put(("status", f"🔄 Vídeo tem {total_duration/60:.1f} min. Dividindo em segmentos de {segment_duration_minutes} min..."))
+
+            # Criar segmentos
+            segment_count = 0
+            start_time = 0
+
+            while start_time < total_duration:
+                segment_count += 1
+                end_time = min(start_time + segment_duration_seconds, total_duration)
+
+                # Nome do arquivo do segmento
+                video_name = os.path.splitext(os.path.basename(video_path))[0]
+                segment_filename = f"{video_name}_segment_{segment_count:03d}.mp4"
+                segment_path = os.path.join(temp_dir, segment_filename)
+
+                # Comando ffmpeg para criar o segmento
+                cmd = [
+                    "ffmpeg", "-i", video_path,
+                    "-ss", str(start_time),
+                    "-t", str(end_time - start_time),
+                    "-c", "copy",  # Cópia sem recodificação para ser mais rápido
+                    "-avoid_negative_ts", "make_zero",
+                    "-y",  # Sobrescrever se existir
+                    segment_path
+                ]
+
+                self.output_queue.put(("log", f"Criando segmento {segment_count}: {segment_filename}\n"))
+                self.output_queue.put(("status", f"🔄 Criando segmento {segment_count}/{int((total_duration/segment_duration_seconds) + 1)}..."))
+
+                # Executar comando ffmpeg
+                result = subprocess.run(cmd, capture_output=True, text=True)
+
+                if result.returncode == 0:
+                    segments.append(segment_path)
+                    self.output_queue.put(("log", f"✅ Segmento {segment_count} criado com sucesso\n"))
+                else:
+                    self.output_queue.put(("log", f"❌ Erro ao criar segmento {segment_count}: {result.stderr}\n"))
+                    break
+
+                start_time = end_time
+
+            self.output_queue.put(("status", f"✅ Vídeo dividido em {len(segments)} segmentos"))
+            return segments
+
+        except Exception as e:
+            self.output_queue.put(("error", f"Erro ao dividir vídeo: {str(e)}"))
+            return [video_path]  # Retornar vídeo original em caso de erro
+
     def process_video(self):
         try:
             # Criar pasta de saída se não existir
             os.makedirs(self.output_dir.get(), exist_ok=True)
 
-            # Construir comando
-            cmd = [
-                "python3", "generateClips.py",
-                self.video_path.get(),
-                "--output-dir", self.output_dir.get(),
-                "--min-clips", str(self.min_clips.get()),
-                "--max-clips", str(self.max_clips.get()),
-                "--whisper-model", self.whisper_model.get()
-            ]
+            # Criar pasta temporária se não existir
+            os.makedirs(self.temp_dir.get(), exist_ok=True)
 
-            if self.api_key.get():
-                cmd.extend(["--api-key", self.api_key.get()])
+            # Dividir vídeo em segmentos se a duração máxima for maior que 0
+            segments = []
+            if self.max_segment_duration.get() > 0:
+                self.output_queue.put(("status", "🔄 Dividindo vídeo em segmentos..."))
+                segments = self.split_video_into_segments(self.video_path.get(), self.max_segment_duration.get(), self.temp_dir.get())
+                if not segments or len(segments) == 0:
+                    self.output_queue.put(("status", "❌ Erro ao dividir vídeo em segmentos"))
+                    return
+            else:
+                segments = [self.video_path.get()]
 
-            if self.no_review.get():
-                cmd.append("--no-review")
+            # Processar cada segmento individualmente
+            for i, segment_path in enumerate(segments):
+                self.output_queue.put(("status", f"🎬 Processando segmento {i+1}/{len(segments)}..."))
 
-            self.output_queue.put(("status", "Executando comando..."))
-            self.output_queue.put(("log", f"Comando: {' '.join(cmd)}\n"))
+                # Construir comando
+                cmd = [
+                    "python3", "generateClips.py",
+                    segment_path,
+                    "--output-dir", self.output_dir.get(),
+                    "--min-clips", str(self.min_clips.get()),
+                    "--max-clips", str(self.max_clips.get()),
+                    "--whisper-model", self.whisper_model.get()
+                ]
 
-            # Executar comando
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True
-            )
+                if self.api_key.get():
+                    cmd.extend(["--api-key", self.api_key.get()])
 
-            # Ler saída em tempo real
-            while True:
-                output = self.process.stdout.readline()
-                if output == '' and self.process.poll() is not None:
-                    break
-                if output:
-                    self.output_queue.put(("log", output))
+                if self.no_review.get():
+                    cmd.append("--no-review")
 
-                    # Atualizar progresso baseado na saída
-                    if "Extracting audio" in output:
-                        self.output_queue.put(("progress", 10))
-                        self.output_queue.put(("status", "Extraindo áudio..."))
-                    elif "Transcribing audio" in output:
-                        self.output_queue.put(("progress", 20))
-                        self.output_queue.put(("status", "Transcrevendo áudio..."))
-                    elif "Finding interesting moments" in output:
-                        self.output_queue.put(("progress", 40))
-                        self.output_queue.put(("status", "Encontrando momentos interessantes..."))
-                    elif "Creating clip" in output:
-                        self.output_queue.put(("progress", 60))
-                        self.output_queue.put(("status", "Criando clipes..."))
-                    elif "Successfully created clip" in output:
-                        self.output_queue.put(("progress", 80))
-                    elif "Process complete" in output:
-                        self.output_queue.put(("progress", 100))
-                        self.output_queue.put(("status", "Processamento concluído!"))
+                self.output_queue.put(("log", f"Comando: {' '.join(cmd)}\n"))
+
+                # Executar comando
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+
+                # Ler saída em tempo real
+                progress_value = 0
+                while True:
+                    output = self.process.stdout.readline()
+                    if output == '' and self.process.poll() is not None:
+                        break
+                    if output:
+                        self.output_queue.put(("log", output))
+
+                        # Atualizar progresso baseado na saída com mais detalhes
+                        if "Splitting video into segments" in output or "Splitting large video" in output:
+                            progress_value = 5
+                            self.output_queue.put(("progress", progress_value))
+                            self.output_queue.put(("status", "🔄 Dividindo vídeo em segmentos..."))
+                        elif "Extracting audio" in output or "audio extraction" in output:
+                            progress_value = 15
+                            self.output_queue.put(("progress", progress_value))
+                            self.output_queue.put(("status", "🎵 Extraindo áudio..."))
+                        elif "Transcribing" in output or "transcription" in output:
+                            progress_value = min(progress_value + 5, 70) # Incrementar gradualmente
+                            self.output_queue.put(("progress", progress_value))
+                            # Extrair informações mais específicas da transcrição
+                            if "segment" in output.lower():
+                                segment_info = output.strip()
+                                self.output_queue.put(("status", f"🎤 Transcrevendo: {segment_info}"))
+                            else:
+                                self.output_queue.put(("status", "🎤 Transcrevendo áudio..."))
+                        elif "Processing transcription" in output:
+                            progress_value = 75
+                            self.output_queue.put(("progress", progress_value))
+                            self.output_queue.put(("status", "📝 Processando transcrições..."))
+                        elif "Finding interesting moments" in output or "analyzing" in output:
+                            progress_value = 80
+                            self.output_queue.put(("progress", progress_value))
+                            self.output_queue.put(("status", "🔍 Analisando momentos interessantes..."))
+                        elif "Creating clip" in output:
+                            progress_value = min(progress_value + 3, 95)
+                            self.output_queue.put(("progress", progress_value))
+                            self.output_queue.put(("status", "🎬 Criando clipes..."))
+                        elif "Successfully created clip" in output:
+                            # Extrair nome do clipe se possível
+                            if ":" in output:
+                                clip_name = output.split(":")[-1].strip()
+                                self.output_queue.put(("status", f"✅ Clipe criado: {clip_name}"))
+                        elif "Process complete" in output or "completed successfully" in output:
+                            progress_value = 100
+                            self.output_queue.put(("progress", progress_value))
+                            self.output_queue.put(("status", "🎉 Processamento concluído!"))
+                        elif "Error" in output or "error" in output.lower():
+                            self.output_queue.put(("status", "❌ Erro detectado - verifique o log"))
+                        elif "%" in output and any(word in output.lower() for word in ["progress", "processing", "complete"]):
+                            # Tentar extrair porcentagem do output
+                            try:
+                                # Usar regex para extrair números antes do %
+                                percentage_match = re.search(r'(\d+)%', output)
+                                if percentage_match:
+                                    percentage = int(percentage_match.group(1))
+                                    progress_value = min(percentage, 95)
+                                    self.output_queue.put(("progress", progress_value))
+                            except:
+                                pass
 
             # Verificar código de saída
             return_code = self.process.poll()
