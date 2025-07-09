@@ -9,6 +9,10 @@ import requests
 import argparse
 import textwrap
 import google.generativeai as genai
+from prompt_template import get_clip_detection_prompt
+
+# Importa o módulo json no nível do módulo para evitar problemas de escopo
+import json as json_module
 
 # Opções de API LLM gratuitas - usaremos a API Google Gemini com limite de uso para o plano gratuito
 # Alternativas incluem a HuggingFace Inference API ou outros serviços gratuitos
@@ -42,36 +46,9 @@ class LLMClipFinder:
             start_time = self._format_time(segment["start"])
             end_time = self._format_time(segment["end"])
             transcript_text += f"[{start_time} - {end_time}] {segment['text']}\n"
-        
-        # Cria o prompt para o LLM
-        prompt = f"""
-Você é um editor de vídeo especialista em encontrar os momentos mais envolventes em vídeos.
 
-Aqui está uma transcrição com carimbos de tempo:
-
-{transcript_text}
-
-Por favor, identifique de {min_clips} a {max_clips} momentos que seriam ótimos para clipes (45-600 segundos cada). Foque em:
-0. SE FOREM MENORES DE 60 SEC = Precisamos de vídeos para o youtube shorts, instagram reels e tiktok (precisam chamar atenção rapidamente) OU SE FOREM MOMENTOS MAIORES DE 60 SEGUNDOS, SÃO VIDEOS PARA YOUTUBE
-1. Declarações ou histórias interessantes
-2. Momentos emocionais
-3. Revelações ou insights surpreendentes
-4. Trechos marcantes ou memoráveis
-5. Momentos autossuficientes que funcionam bem isoladamente
-
-Formate sua resposta como JSON com esta estrutura:
-{{
-  "clips": [
-    {{
-      "start": "mm:ss",
-      "end": "mm:ss",
-      "reason": "breve explicação",
-      "caption": "legenda sugerida"
-    }},
-    ...
-  ]
-}}
-"""
+        # Usa o prompt do arquivo separado
+        prompt = get_clip_detection_prompt(transcript_text, min_clips, max_clips)
 
         if self.use_gemini:
             return self._call_gemini_api(prompt)
@@ -400,7 +377,7 @@ def review_clips(clips, transcription_segments):
                                             "start": line_start,
                                             "end": line_end
                                         })
-    
+
                                     transcription_segments[trans_idx]['text_lines'] = new_text_lines
                     else:
                         try:

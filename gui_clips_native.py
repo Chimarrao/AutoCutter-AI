@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
 import subprocess
 import threading
 import os
@@ -9,47 +9,35 @@ import queue
 import tempfile
 import re
 
+# Configurar aparência do CustomTkinter
+ctk.set_appearance_mode("dark")  # Modes: "System" (standard), "Dark", "Light"
+ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+
+
 class ClipGeneratorGUI:
     def __init__(self):
-        self.root = tk.Tk()
+        self.root = ctk.CTk()
         self.root.title("🎬 Gerador de Clipes com IA")
         self.root.geometry("1280x900")
         self.root.resizable(True, True)
 
-        # Configurar tema escuro
-        self.root.configure(bg='#2b2b2b')
-
-        # Configurar estilo do ttk
-        self.style = ttk.Style()
-        self.style.theme_use('clam')
-
-        # Cores personalizadas
-        self.bg_color = '#2b2b2b'
-        self.fg_color = '#ffffff'
-        self.accent_color = '#0078d4'
-        self.frame_color = '#3c3c3c'
-        self.entry_color = '#404040'
-
-        # Configurar estilos personalizados
-        self.setup_styles()
-
         # Arquivo de configuração
         self.config_file = os.path.join(os.path.dirname(__file__), 'user_config.json')
-        
+
         # Carregar configurações salvas
         self.load_config()
 
         # Variáveis
-        self.video_path = tk.StringVar()
-        self.output_dir = tk.StringVar(value="output_folder")
-        self.min_clips = tk.IntVar(value=3)
-        self.max_clips = tk.IntVar(value=8)
-        self.whisper_model = tk.StringVar(value="base")
-        self.api_key = tk.StringVar(value=self.saved_api_key)  # Carregar chave salva
-        self.captions = tk.BooleanVar(value=True)
-        self.no_review = tk.BooleanVar(value=True)
-        self.max_segment_duration = tk.IntVar(value=30)  # Nova variável para duração máxima
-        self.temp_dir = tk.StringVar(value=os.path.join(tempfile.gettempdir(), "video_segments"))
+        self.video_path = ctk.StringVar()
+        self.output_dir = ctk.StringVar(value="output_folder")
+        self.min_clips = ctk.IntVar(value=3)
+        self.max_clips = ctk.IntVar(value=8)
+        self.whisper_model = ctk.StringVar(value="base")
+        self.api_key = ctk.StringVar(value=self.saved_api_key)
+        self.captions = ctk.BooleanVar(value=True)
+        self.no_review = ctk.BooleanVar(value=True)
+        self.max_segment_duration = ctk.IntVar(value=30)
+        self.temp_dir = ctk.StringVar(value=os.path.join(tempfile.gettempdir(), "video_segments"))
 
         # Fila para comunicação entre threads
         self.output_queue = queue.Queue()
@@ -81,314 +69,351 @@ class ClipGeneratorGUI:
         except Exception as e:
             print(f"Erro ao salvar configurações: {e}")
 
-    def setup_styles(self):
-        # Configurar estilos ttk
-        self.style.configure('Custom.TFrame', background=self.frame_color)
-        self.style.configure('Custom.TLabel', background=self.frame_color, foreground=self.fg_color, font=('Arial', 10))
-        self.style.configure('Title.TLabel', background=self.bg_color, foreground=self.fg_color, font=('Arial', 20, 'bold'))
-        self.style.configure('Subtitle.TLabel', background=self.bg_color, foreground='#cccccc', font=('Arial', 12))
-        self.style.configure('Bold.TLabel', background=self.frame_color, foreground=self.fg_color, font=('Arial', 10, 'bold'))
-        self.style.configure('Custom.TEntry', insertcolor=self.fg_color, fieldbackground=self.entry_color, foreground=self.fg_color)
-        self.style.configure('Custom.TButton', background=self.accent_color, foreground=self.fg_color, font=('Arial', 10, 'bold'))
-        self.style.configure('Success.TButton', background='#28a745', foreground=self.fg_color, font=('Arial', 12, 'bold'))
-        self.style.configure('Danger.TButton', background='#dc3545', foreground=self.fg_color, font=('Arial', 12, 'bold'))
-        self.style.configure('Custom.TCombobox', fieldbackground=self.entry_color, foreground=self.fg_color)
-        self.style.configure('Custom.TCheckbutton', background=self.frame_color, foreground=self.fg_color, font=('Arial', 10))
-
-        # Configurar mapa de estados
-        self.style.map('Custom.TButton', background=[('active', '#106ebe'), ('pressed', '#005a9e')])
-        self.style.map('Success.TButton', background=[('active', '#218838'), ('pressed', '#1e7e34')])
-        self.style.map('Danger.TButton', background=[('active', '#c82333'), ('pressed', '#bd2130')])
-
     def setup_ui(self):
         # Frame principal
-        main_frame = ttk.Frame(self.root, style='Custom.TFrame')
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        main_frame = ctk.CTkFrame(self.root)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
         # Título
-        title_label = ttk.Label(
+        title_label = ctk.CTkLabel(
             main_frame,
             text="🎬 Gerador de Clipes com IA",
-            style='Title.TLabel'
+            font=ctk.CTkFont(size=28, weight="bold")
         )
-        title_label.pack(pady=(10, 5))
+        title_label.pack(pady=(20, 10))
 
         # Subtitle
-        subtitle_label = ttk.Label(
+        subtitle_label = ctk.CTkLabel(
             main_frame,
             text="Transforme seus vídeos em clipes curtos automaticamente",
-            style='Subtitle.TLabel'
+            font=ctk.CTkFont(size=16),
+            text_color="gray70"
         )
-        subtitle_label.pack(pady=(0, 20))
+        subtitle_label.pack(pady=(0, 30))
 
-        # Notebook para organizar as configurações
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        # Tabview para organizar as configurações
+        self.tabview = ctk.CTkTabview(main_frame)
+        self.tabview.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # Tab 1: Configurações básicas
+        # Tabs
+        self.tabview.add("📁 Básico")
+        self.tabview.add("⚙️ Avançado")
+        self.tabview.add("⚡ Processamento")
+
+        # Setup tabs
         self.setup_basic_tab()
-
-        # Tab 2: Configurações avançadas
         self.setup_advanced_tab()
-
-        # Tab 3: Processamento
         self.setup_processing_tab()
 
         # Frame de botões
-        button_frame = ttk.Frame(main_frame, style='Custom.TFrame')
-        button_frame.pack(fill="x", padx=10, pady=10)
+        button_frame = ctk.CTkFrame(main_frame)
+        button_frame.pack(fill="x", padx=20, pady=20)
 
         # Botão processar
-        self.process_button = ttk.Button(
+        self.process_button = ctk.CTkButton(
             button_frame,
             text="🚀 Processar Vídeo",
             command=self.start_processing,
-            style='Success.TButton'
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=50,
+            width=200,
+            fg_color="green",
+            hover_color="darkgreen"
         )
-        self.process_button.pack(side="left", padx=5, pady=5, ipadx=20, ipady=10)
+        self.process_button.pack(side="left", padx=10, pady=10)
 
         # Botão parar
-        self.stop_button = ttk.Button(
+        self.stop_button = ctk.CTkButton(
             button_frame,
             text="⏹️ Parar",
             command=self.stop_processing,
             state="disabled",
-            style='Danger.TButton'
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=50,
+            width=150,
+            fg_color="red",
+            hover_color="darkred"
         )
-        self.stop_button.pack(side="right", padx=5, pady=5, ipadx=20, ipady=10)
+        self.stop_button.pack(side="right", padx=10, pady=10)
 
     def setup_basic_tab(self):
         # Frame da aba básica
-        basic_frame = ttk.Frame(self.notebook, style='Custom.TFrame')
-        self.notebook.add(basic_frame, text="📁 Básico")
+        basic_frame = self.tabview.tab("📁 Básico")
 
-        # Canvas e scrollbar para rolagem
-        canvas = tk.Canvas(basic_frame, bg=self.frame_color, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(basic_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas, style='Custom.TFrame')
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        # Scrollable frame
+        scrollable_frame = ctk.CTkScrollableFrame(basic_frame)
+        scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
         # Seleção de vídeo
-        video_frame = ttk.LabelFrame(scrollable_frame, text="📹 Arquivo de Vídeo", style='Custom.TFrame')
-        video_frame.pack(fill="x", padx=20, pady=10)
+        video_frame = ctk.CTkFrame(scrollable_frame)
+        video_frame.pack(fill="x", padx=10, pady=10)
 
-        video_input_frame = ttk.Frame(video_frame, style='Custom.TFrame')
-        video_input_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(
+            video_frame,
+            text="📹 Arquivo de Vídeo",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
 
-        self.video_entry = ttk.Entry(
+        video_input_frame = ctk.CTkFrame(video_frame)
+        video_input_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.video_entry = ctk.CTkEntry(
             video_input_frame,
             textvariable=self.video_path,
-            style='Custom.TEntry',
-            width=50
+            placeholder_text="Selecione um arquivo de vídeo...",
+            height=40,
+            font=ctk.CTkFont(size=14)
         )
-        self.video_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.video_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        ttk.Button(
+        ctk.CTkButton(
             video_input_frame,
             text="📂 Navegar",
             command=self.browse_video,
-            style='Custom.TButton'
-        ).pack(side="right", padx=(5, 0), ipadx=10)
+            width=120,
+            height=40
+        ).pack(side="right")
 
         # Pasta de saída
-        output_frame = ttk.LabelFrame(scrollable_frame, text="📁 Pasta de Saída", style='Custom.TFrame')
-        output_frame.pack(fill="x", padx=20, pady=10)
+        output_frame = ctk.CTkFrame(scrollable_frame)
+        output_frame.pack(fill="x", padx=10, pady=10)
 
-        output_input_frame = ttk.Frame(output_frame, style='Custom.TFrame')
-        output_input_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(
+            output_frame,
+            text="📁 Pasta de Saída",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
 
-        self.output_entry = ttk.Entry(
+        output_input_frame = ctk.CTkFrame(output_frame)
+        output_input_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.output_entry = ctk.CTkEntry(
             output_input_frame,
             textvariable=self.output_dir,
-            style='Custom.TEntry',
-            width=50
+            placeholder_text="Pasta onde os clipes serão salvos...",
+            height=40,
+            font=ctk.CTkFont(size=14)
         )
-        self.output_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.output_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        ttk.Button(
+        ctk.CTkButton(
             output_input_frame,
             text="📂 Navegar",
             command=self.browse_output,
-            style='Custom.TButton'
-        ).pack(side="right", padx=(5, 0), ipadx=10)
+            width=120,
+            height=40
+        ).pack(side="right")
 
         # Número de clipes
-        clips_frame = ttk.LabelFrame(scrollable_frame, text="🎯 Quantidade de Clipes", style='Custom.TFrame')
-        clips_frame.pack(fill="x", padx=20, pady=10)
+        clips_frame = ctk.CTkFrame(scrollable_frame)
+        clips_frame.pack(fill="x", padx=10, pady=10)
 
-        clips_config_frame = ttk.Frame(clips_frame, style='Custom.TFrame')
-        clips_config_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(
+            clips_frame,
+            text="🎯 Quantidade de Clipes",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        clips_config_frame = ctk.CTkFrame(clips_frame)
+        clips_config_frame.pack(fill="x", padx=20, pady=(0, 20))
 
         # Min clips
-        ttk.Label(clips_config_frame, text="Mínimo:", style='Custom.TLabel').pack(side="left", padx=(0, 5))
-        min_spinbox = tk.Spinbox(clips_config_frame, from_=1, to=50, textvariable=self.min_clips,
-                                width=10, bg=self.entry_color, fg=self.fg_color, insertbackground=self.fg_color)
-        min_spinbox.pack(side="left", padx=(0, 20))
+        min_frame = ctk.CTkFrame(clips_config_frame)
+        min_frame.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        ctk.CTkLabel(min_frame, text="Mínimo:", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
+        self.min_spinbox = ctk.CTkEntry(min_frame, textvariable=self.min_clips, width=80, justify="center")
+        self.min_spinbox.pack(pady=(0, 10))
 
         # Max clips
-        ttk.Label(clips_config_frame, text="Máximo:", style='Custom.TLabel').pack(side="left", padx=(0, 5))
-        max_spinbox = tk.Spinbox(clips_config_frame, from_=1, to=100, textvariable=self.max_clips,
-                                width=10, bg=self.entry_color, fg=self.fg_color, insertbackground=self.fg_color)
-        max_spinbox.pack(side="left")
+        max_frame = ctk.CTkFrame(clips_config_frame)
+        max_frame.pack(side="right", fill="x", expand=True, padx=(10, 0))
+
+        ctk.CTkLabel(max_frame, text="Máximo:", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
+        self.max_spinbox = ctk.CTkEntry(max_frame, textvariable=self.max_clips, width=80, justify="center")
+        self.max_spinbox.pack(pady=(0, 10))
 
     def setup_advanced_tab(self):
         # Frame da aba avançada
-        advanced_frame = ttk.Frame(self.notebook, style='Custom.TFrame')
-        self.notebook.add(advanced_frame, text="⚙️ Avançado")
+        advanced_frame = self.tabview.tab("⚙️ Avançado")
 
-        # Canvas e scrollbar para rolagem
-        canvas = tk.Canvas(advanced_frame, bg=self.frame_color, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(advanced_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas, style='Custom.TFrame')
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        # Scrollable frame
+        scrollable_frame = ctk.CTkScrollableFrame(advanced_frame)
+        scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
         # Modelo Whisper
-        whisper_frame = ttk.LabelFrame(scrollable_frame, text="🎤 Modelo Whisper", style='Custom.TFrame')
-        whisper_frame.pack(fill="x", padx=20, pady=10)
+        whisper_frame = ctk.CTkFrame(scrollable_frame)
+        whisper_frame.pack(fill="x", padx=10, pady=10)
 
-        whisper_combo = ttk.Combobox(
+        ctk.CTkLabel(
+            whisper_frame,
+            text="🎤 Modelo Whisper",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        self.whisper_combo = ctk.CTkComboBox(
             whisper_frame,
             values=["tiny", "base", "small", "medium", "large"],
-            textvariable=self.whisper_model,
-            style='Custom.TCombobox',
-            state="readonly"
+            variable=self.whisper_model,
+            state="readonly",
+            height=40,
+            font=ctk.CTkFont(size=14)
         )
-        whisper_combo.pack(padx=10, pady=10, fill="x")
+        self.whisper_combo.pack(fill="x", padx=20, pady=(0, 20))
 
         # API Key
-        api_frame = ttk.LabelFrame(scrollable_frame, text="🔑 Chave API do Google Gemini", style='Custom.TFrame')
-        api_frame.pack(fill="x", padx=20, pady=10)
+        api_frame = ctk.CTkFrame(scrollable_frame)
+        api_frame.pack(fill="x", padx=10, pady=10)
 
-        self.api_entry = ttk.Entry(
+        ctk.CTkLabel(
+            api_frame,
+            text="🔑 Chave API do Google Gemini",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        self.api_entry = ctk.CTkEntry(
             api_frame,
             textvariable=self.api_key,
-            style='Custom.TEntry',
-            show="*"
+            placeholder_text="Cole sua chave API aqui...",
+            show="*",
+            height=40,
+            font=ctk.CTkFont(size=14)
         )
-        self.api_entry.pack(fill="x", padx=10, pady=10)
+        self.api_entry.pack(fill="x", padx=20, pady=(0, 20))
 
         # Opções
-        options_frame = ttk.LabelFrame(scrollable_frame, text="🎛️ Opções", style='Custom.TFrame')
-        options_frame.pack(fill="x", padx=20, pady=10)
+        options_frame = ctk.CTkFrame(scrollable_frame)
+        options_frame.pack(fill="x", padx=10, pady=10)
+
+        ctk.CTkLabel(
+            options_frame,
+            text="🎛️ Opções",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
 
         # Checkbox para não revisar
-        self.no_review_checkbox = ttk.Checkbutton(
+        self.no_review_checkbox = ctk.CTkCheckBox(
             options_frame,
             text="Processar sem revisão manual",
             variable=self.no_review,
-            style='Custom.TCheckbutton'
+            font=ctk.CTkFont(size=14)
         )
-        self.no_review_checkbox.pack(anchor="w", padx=10, pady=(5, 10))
+        self.no_review_checkbox.pack(anchor="w", padx=20, pady=(0, 20))
 
         # Duração máxima do segmento
-        duration_frame = ttk.LabelFrame(scrollable_frame, text="⏱️ Duração Máxima do Segmento", style='Custom.TFrame')
-        duration_frame.pack(fill="x", padx=20, pady=10)
+        duration_frame = ctk.CTkFrame(scrollable_frame)
+        duration_frame.pack(fill="x", padx=10, pady=10)
 
-        ttk.Label(duration_frame, text="Duração máxima de cada segmento em minutos:", style='Custom.TLabel').pack(anchor="w", padx=10, pady=(5, 0))
-
-        duration_spinbox = tk.Spinbox(
+        ctk.CTkLabel(
             duration_frame,
-            from_=1,
-            to=300,
+            text="⏱️ Duração Máxima do Segmento",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        ctk.CTkLabel(
+            duration_frame,
+            text="Duração máxima de cada segmento em minutos:",
+            font=ctk.CTkFont(size=14)
+        ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        self.duration_spinbox = ctk.CTkEntry(
+            duration_frame,
             textvariable=self.max_segment_duration,
-            width=10,
-            bg=self.entry_color,
-            fg=self.fg_color,
-            insertbackground=self.fg_color
+            width=100,
+            justify="center",
+            height=40
         )
-        duration_spinbox.pack(side="left", padx=10, pady=10)
+        self.duration_spinbox.pack(anchor="w", padx=20, pady=(0, 20))
 
         # Pasta temporária
-        temp_frame = ttk.LabelFrame(scrollable_frame, text="📂 Pasta Temporária", style='Custom.TFrame')
-        temp_frame.pack(fill="x", padx=20, pady=10)
+        temp_frame = ctk.CTkFrame(scrollable_frame)
+        temp_frame.pack(fill="x", padx=10, pady=10)
 
-        ttk.Label(temp_frame, text="Pasta onde os segmentos de vídeo serão armazenados temporariamente:", style='Custom.TLabel').pack(anchor="w", padx=10, pady=(5, 0))
-
-        temp_entry = ttk.Entry(
+        ctk.CTkLabel(
             temp_frame,
+            text="📂 Pasta Temporária",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        ctk.CTkLabel(
+            temp_frame,
+            text="Pasta onde os segmentos de vídeo serão armazenados temporariamente:",
+            font=ctk.CTkFont(size=14)
+        ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        temp_input_frame = ctk.CTkFrame(temp_frame)
+        temp_input_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.temp_entry = ctk.CTkEntry(
+            temp_input_frame,
             textvariable=self.temp_dir,
-            style='Custom.TEntry',
-            width=50
+            placeholder_text="Pasta temporária...",
+            height=40,
+            font=ctk.CTkFont(size=14)
         )
-        temp_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.temp_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        ttk.Button(
-            temp_frame,
+        ctk.CTkButton(
+            temp_input_frame,
             text="📂 Navegar",
             command=self.browse_temp,
-            style='Custom.TButton'
-        ).pack(side="right", padx=(5, 0), ipadx=10)
+            width=120,
+            height=40
+        ).pack(side="right")
 
     def setup_processing_tab(self):
         # Frame da aba de processamento
-        processing_frame = ttk.Frame(self.notebook, style='Custom.TFrame')
-        self.notebook.add(processing_frame, text="⚡ Processamento")
+        processing_frame = self.tabview.tab("⚡ Processamento")
 
         # Status
-        status_frame = ttk.LabelFrame(processing_frame, text="📊 Status", style='Custom.TFrame')
-        status_frame.pack(fill="x", padx=20, pady=10)
+        status_frame = ctk.CTkFrame(processing_frame)
+        status_frame.pack(fill="x", padx=20, pady=20)
 
-        self.status_label = ttk.Label(
+        ctk.CTkLabel(
+            status_frame,
+            text="📊 Status",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        self.status_label = ctk.CTkLabel(
             status_frame,
             text="Aguardando...",
-            style='Custom.TLabel'
+            font=ctk.CTkFont(size=14),
+            anchor="w"
         )
-        self.status_label.pack(anchor="w", padx=10, pady=10)
+        self.status_label.pack(fill="x", padx=20, pady=(0, 20))
 
         # Barra de progresso
-        progress_frame = ttk.LabelFrame(processing_frame, text="📈 Progresso", style='Custom.TFrame')
-        progress_frame.pack(fill="x", padx=20, pady=10)
+        progress_frame = ctk.CTkFrame(processing_frame)
+        progress_frame.pack(fill="x", padx=20, pady=(0, 20))
 
-        self.progress_bar = ttk.Progressbar(
+        ctk.CTkLabel(
             progress_frame,
-            mode='determinate'
-        )
-        self.progress_bar.pack(fill="x", padx=10, pady=10)
+            text="📈 Progresso",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        self.progress_bar = ctk.CTkProgressBar(progress_frame, height=20)
+        self.progress_bar.pack(fill="x", padx=20, pady=(0, 20))
+        self.progress_bar.set(0)
 
         # Log de saída
-        log_frame = ttk.LabelFrame(processing_frame, text="📝 Log de Processamento", style='Custom.TFrame')
-        log_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        log_frame = ctk.CTkFrame(processing_frame)
+        log_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
-        # Frame para text widget e scrollbar
-        text_frame = ttk.Frame(log_frame, style='Custom.TFrame')
-        text_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(
+            log_frame,
+            text="📝 Log de Processamento",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
 
         # Text widget para o log
-        self.log_text = tk.Text(
-            text_frame,
-            height=15,
-            bg=self.entry_color,
-            fg=self.fg_color,
-            insertbackground=self.fg_color,
-            font=('Consolas', 10)
+        self.log_text = ctk.CTkTextbox(
+            log_frame,
+            height=300,
+            font=ctk.CTkFont(family="Consolas", size=12)
         )
-
-        # Scrollbar para o text widget
-        log_scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=log_scrollbar.set)
-
-        self.log_text.pack(side="left", fill="both", expand=True)
-        log_scrollbar.pack(side="right", fill="y")
+        self.log_text.pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
     def browse_video(self):
         filename = filedialog.askopenfilename(
@@ -457,11 +482,11 @@ class ClipGeneratorGUI:
         self.process_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status_label.configure(text="Iniciando processamento...")
-        self.progress_bar['value'] = 0
-        self.log_text.delete("1.0", tk.END)
+        self.progress_bar.set(0)
+        self.log_text.delete("1.0", "end")
 
         # Mudar para a aba de processamento
-        self.notebook.select(2)  # Selecionar a terceira aba (índice 2)
+        self.tabview.set("⚡ Processamento")
 
         # Iniciar thread de processamento
         thread = threading.Thread(target=self.process_video, daemon=True)
@@ -500,7 +525,8 @@ class ClipGeneratorGUI:
                 # Vídeo não precisa ser dividido
                 return [video_path]
 
-            self.output_queue.put(("status", f"🔄 Vídeo tem {total_duration/60:.1f} min. Dividindo em segmentos de {segment_duration_minutes} min..."))
+            self.output_queue.put(("status",
+                                   f"🔄 Vídeo tem {total_duration / 60:.1f} min. Dividindo em segmentos de {segment_duration_minutes} min..."))
 
             # Criar segmentos
             segment_count = 0
@@ -527,7 +553,8 @@ class ClipGeneratorGUI:
                 ]
 
                 self.output_queue.put(("log", f"Criando segmento {segment_count}: {segment_filename}\n"))
-                self.output_queue.put(("status", f"🔄 Criando segmento {segment_count}/{int((total_duration/segment_duration_seconds) + 1)}..."))
+                self.output_queue.put(("status",
+                                       f"🔄 Criando segmento {segment_count}/{int((total_duration / segment_duration_seconds) + 1)}..."))
 
                 # Executar comando ffmpeg
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -560,7 +587,8 @@ class ClipGeneratorGUI:
             segments = []
             if self.max_segment_duration.get() > 0:
                 self.output_queue.put(("status", "🔄 Dividindo vídeo em segmentos..."))
-                segments = self.split_video_into_segments(self.video_path.get(), self.max_segment_duration.get(), self.temp_dir.get())
+                segments = self.split_video_into_segments(self.video_path.get(), self.max_segment_duration.get(),
+                                                          self.temp_dir.get())
                 if not segments or len(segments) == 0:
                     self.output_queue.put(("status", "❌ Erro ao dividir vídeo em segmentos"))
                     return
@@ -569,7 +597,7 @@ class ClipGeneratorGUI:
 
             # Processar cada segmento individualmente
             for i, segment_path in enumerate(segments):
-                self.output_queue.put(("status", f"🎬 Processando segmento {i+1}/{len(segments)}..."))
+                self.output_queue.put(("status", f"🎬 Processando segmento {i + 1}/{len(segments)}..."))
 
                 # Construir comando
                 cmd = [
@@ -618,7 +646,7 @@ class ClipGeneratorGUI:
                             self.output_queue.put(("progress", progress_value))
                             self.output_queue.put(("status", "🎵 Extraindo áudio..."))
                         elif "Transcribing" in output or "transcription" in output:
-                            progress_value = min(progress_value + 5, 70) # Incrementar gradualmente
+                            progress_value = min(progress_value + 5, 70)  # Incrementar gradualmente
                             self.output_queue.put(("progress", progress_value))
                             # Extrair informações mais específicas da transcrição
                             if "segment" in output.lower():
@@ -649,7 +677,8 @@ class ClipGeneratorGUI:
                             self.output_queue.put(("status", "🎉 Processamento concluído!"))
                         elif "Error" in output or "error" in output.lower():
                             self.output_queue.put(("status", "❌ Erro detectado - verifique o log"))
-                        elif "%" in output and any(word in output.lower() for word in ["progress", "processing", "complete"]):
+                        elif "%" in output and any(
+                                word in output.lower() for word in ["progress", "processing", "complete"]):
                             # Tentar extrair porcentagem do output
                             try:
                                 # Usar regex para extrair números antes do %
@@ -680,10 +709,10 @@ class ClipGeneratorGUI:
                 if msg_type == "status":
                     self.status_label.configure(text=data)
                 elif msg_type == "progress":
-                    self.progress_bar['value'] = data
+                    self.progress_bar.set(data / 100)
                 elif msg_type == "log":
-                    self.log_text.insert(tk.END, data)
-                    self.log_text.see(tk.END)
+                    self.log_text.insert("end", data)
+                    self.log_text.see("end")
                 elif msg_type == "error":
                     messagebox.showerror("Erro", f"Erro durante o processamento:\n{data}")
                 elif msg_type == "finished":
@@ -692,7 +721,8 @@ class ClipGeneratorGUI:
                     self.stop_button.configure(state="disabled")
 
                     if data:  # Sucesso
-                        messagebox.showinfo("Sucesso", f"Processamento concluído com sucesso!\n\nOs clipes foram salvos em:\n{self.output_dir.get()}")
+                        messagebox.showinfo("Sucesso",
+                                            f"Processamento concluído com sucesso!\n\nOs clipes foram salvos em:\n{self.output_dir.get()}")
                         # Abrir pasta de saída
                         if messagebox.askyesno("Abrir Pasta", "Deseja abrir a pasta de saída?"):
                             self.open_output_folder()
@@ -714,9 +744,11 @@ class ClipGeneratorGUI:
     def run(self):
         self.root.mainloop()
 
+
 def main():
     app = ClipGeneratorGUI()
     app.run()
+
 
 if __name__ == "__main__":
     main()
