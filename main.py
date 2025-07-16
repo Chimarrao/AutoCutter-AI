@@ -8,6 +8,8 @@ import json
 import queue
 import tempfile
 import re
+import yt_dlp
+import urllib.parse
 
 # Configurar aparência do CustomTkinter
 ctk.set_appearance_mode("dark")  # Modes: "System" (standard), "Dark", "Light"
@@ -29,6 +31,7 @@ class ClipGeneratorGUI:
 
         # Variáveis
         self.video_path = ctk.StringVar()
+        self.youtube_url = ctk.StringVar()
         self.output_dir = ctk.StringVar(value="output_folder")
         self.min_clips = ctk.IntVar(value=3)
         self.max_clips = ctk.IntVar(value=8)
@@ -38,6 +41,8 @@ class ClipGeneratorGUI:
         self.no_review = ctk.BooleanVar(value=True)
         self.max_segment_duration = ctk.IntVar(value=30)
         self.temp_dir = ctk.StringVar(value=os.path.join(tempfile.gettempdir(), "video_segments"))
+        self.downloads_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "downloads"))
+        self.is_downloading = False
 
         # Fila para comunicação entre threads
         self.output_queue = queue.Queue()
@@ -170,6 +175,36 @@ class ClipGeneratorGUI:
             video_input_frame,
             text="📂 Navegar",
             command=self.browse_video,
+            width=120,
+            height=40
+        ).pack(side="right")
+
+        # URL do YouTube
+        youtube_frame = ctk.CTkFrame(scrollable_frame)
+        youtube_frame.pack(fill="x", padx=10, pady=10)
+
+        ctk.CTkLabel(
+            youtube_frame,
+            text="🔗 URL do YouTube",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        youtube_input_frame = ctk.CTkFrame(youtube_frame)
+        youtube_input_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.youtube_entry = ctk.CTkEntry(
+            youtube_input_frame,
+            textvariable=self.youtube_url,
+            placeholder_text="Cole a URL do vídeo do YouTube...",
+            height=40,
+            font=ctk.CTkFont(size=14)
+        )
+        self.youtube_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        ctk.CTkButton(
+            youtube_input_frame,
+            text="📥 Baixar",
+            command=self.download_youtube_video,
             width=120,
             height=40
         ).pack(side="right")
@@ -415,6 +450,135 @@ class ClipGeneratorGUI:
         )
         self.log_text.pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
+    def is_valid_youtube_url(self, url):
+        """Validar se a URL é válida do YouTube"""
+        try:
+            parsed_url = urllib.parse.urlparse(url)
+            if parsed_url.netloc in ['www.youtube.com', 'youtube.com', 'youtu.be', 'm.youtube.com']:
+                return True
+            return False
+        except:
+            return False
+
+    def download_youtube_video(self):
+        """Baixar vídeo do YouTube usando yt-dlp"""
+        url = self.youtube_url.get().strip()
+
+        if not url:
+            messagebox.showerror("Erro", "Por favor, insira uma URL do YouTube!")
+            return
+
+        if not self.is_valid_youtube_url(url):
+            messagebox.showerror("Erro", "URL inválida! Por favor, insira uma URL válida do YouTube.")
+            return
+
+        if self.is_downloading:
+            messagebox.showwarning("Aviso", "Já existe um download em andamento!")
+            return
+
+        # Criar pasta de downloads se não existir
+        os.makedirs(self.downloads_dir.get(), exist_ok=True)
+
+        # Iniciar download em thread separada
+        self.is_downloading = True
+        self.tabview.set("⚡ Processamento")
+        self.status_label.configure(text="🔄 Iniciando download do YouTube...")
+        self.progress_bar.set(0)
+        self.log_text.delete("1.0", "end")
+
+        thread = threading.Thread(target=self.download_youtube_video_thread, args=(url,), daemon=True)
+        thread.start()
+
+    def download_youtube_video_thread(self, url):
+        """Thread para download do vídeo do YouTube"""
+        try:
+            def progress_hook(d):
+                if d['status'] == 'downloading':
+                    try:
+                        # Calcular progresso baseado no tamanho do arquivo
+                        if 'total_bytes' in d and d['total_bytes']:
+                            percent = (d['downloaded_bytes'] / d['total_bytes']) * 100
+                            self.output_queue.put(("progress", min(percent, 95)))
+                        elif 'total_bytes_estimate' in d and d['total_bytes_estimate']:
+                            percent = (d['downloaded_bytes'] / d['total_bytes_estimate']) * 100
+                            self.output_queue.put(("progress", min(percent, 95)))
+
+                        # Atualizar status com informações de download
+                        speed = d.get('speed', 0)
+                        if speed:
+                            speed_mb = speed / 1024 / 1024
+                            self.output_queue.put(("status", f"📥 Baixando... {speed_mb:.1f} MB/s"))
+                        else:
+                            self.output_queue.put(("status", "📥 Baixando..."))
+
+                        # Log detalhado
+                        if 'filename' in d:
+                            filename = os.path.basename(d['filename'])
+                            self.output_queue.put(("log", f"Baixando: {filename}\n"))
+
+                    except Exception as e:
+                        self.output_queue.put(("log", f"Erro ao processar progresso: {e}\n"))
+
+                elif d['status'] == 'finished':
+                    self.output_queue.put(("progress", 100))
+                    self.output_queue.put(("status", "✅ Download concluído!"))
+                    self.output_queue.put(("log", f"✅ Download concluído: {d['filename']}\n"))
+
+                    # Definir o arquivo baixado como vídeo atual
+                    downloaded_file = d['filename']
+                    self.video_path.set(downloaded_file)
+                    self.output_queue.put(("log", f"📁 Arquivo definido como vídeo atual: {downloaded_file}\n"))
+
+            # Configurações do yt-dlp para melhor qualidade
+            ydl_opts = {
+                'format': 'bestvideo+bestaudio/best',  # Sempre baixar na maior resolução possível
+                'outtmpl': os.path.join(self.downloads_dir.get(), '%(title)s.%(ext)s'),
+                'progress_hooks': [progress_hook],
+                'noplaylist': True,  # Baixar apenas o vídeo, não a playlist
+                'writesubtitles': False,
+                'writeautomaticsub': False,
+                'merge_output_format': 'mp4',  # Forçar saída mp4 se possível
+            }
+
+            self.output_queue.put(("status", "🔍 Obtendo informações do vídeo..."))
+            self.output_queue.put(("log", f"URL: {url}\n"))
+            self.output_queue.put(("log", f"Pasta de download: {self.downloads_dir.get()}\n"))
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Obter informações do vídeo primeiro
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', 'Vídeo sem título')
+                duration = info.get('duration', 0)
+                uploader = info.get('uploader', 'Desconhecido')
+
+                self.output_queue.put(("log", f"📽️ Título: {title}\n"))
+                self.output_queue.put(("log", f"📝 Canal: {uploader}\n"))
+                self.output_queue.put(("log", f"⏱️ Duração: {duration // 60}:{duration % 60:02d}\n"))
+
+                # Verificar se já existe um arquivo com o mesmo nome
+                expected_filename = os.path.join(self.downloads_dir.get(), f"{title}.mp4")
+                if os.path.exists(expected_filename):
+                    if messagebox.askyesno("Arquivo Existente",
+                                         f"O arquivo '{title}.mp4' já existe.\n\nDeseja baixar novamente?"):
+                        self.output_queue.put(("log", "🔄 Sobrescrevendo arquivo existente...\n"))
+                    else:
+                        self.output_queue.put(("log", "📁 Usando arquivo existente...\n"))
+                        self.video_path.set(expected_filename)
+                        self.output_queue.put(("download_finished", True))
+                        return
+
+                # Baixar o vídeo
+                self.output_queue.put(("status", f"📥 Baixando: {title}..."))
+                ydl.download([url])
+
+                self.output_queue.put(("download_finished", True))
+
+        except Exception as e:
+            error_msg = str(e)
+            self.output_queue.put(("log", f"❌ Erro no download: {error_msg}\n"))
+            self.output_queue.put(("status", "❌ Erro no download"))
+            self.output_queue.put(("download_finished", False))
+
     def browse_video(self):
         filename = filedialog.askopenfilename(
             title="Selecionar Vídeo",
@@ -425,6 +589,8 @@ class ClipGeneratorGUI:
         )
         if filename:
             self.video_path.set(filename)
+            # Limpar URL do YouTube se um arquivo local foi selecionado
+            self.youtube_url.set("")
 
     def browse_output(self):
         dirname = filedialog.askdirectory(title="Selecionar Pasta de Saída")
@@ -715,6 +881,15 @@ class ClipGeneratorGUI:
                     self.log_text.see("end")
                 elif msg_type == "error":
                     messagebox.showerror("Erro", f"Erro durante o processamento:\n{data}")
+                elif msg_type == "download_finished":
+                    self.is_downloading = False
+                    if data:  # Sucesso
+                        messagebox.showinfo("Download Concluído",
+                                          f"Download do YouTube concluído com sucesso!\n\nO vídeo foi salvo em:\n{self.downloads_dir.get()}")
+                        # Voltar para a aba básica
+                        self.tabview.set("📁 Básico")
+                    else:  # Falha
+                        messagebox.showerror("Erro", "O download falhou. Verifique o log para mais detalhes.")
                 elif msg_type == "finished":
                     self.is_processing = False
                     self.process_button.configure(state="normal")

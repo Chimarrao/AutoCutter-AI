@@ -24,14 +24,14 @@ for f in output_folder/*.mp4; do
       [0:v]scale=1080:-1[fg]; \
       [fg]boxblur=10[bg]; \
       [bg][fg]overlay=(W-w)/2:(H-h)/2" \
-      -c:a copy "shorts_prontos/${name}_9x16.mp4"
+      -c:a copy "shorts_prontos/${name}"
   else
     echo "Vídeo horizontal. Mantendo parte da ESQUERDA (apresentador)."
     ffmpeg -y -i "$f" -vf "\
       scale=-2:1920, \
       crop=1080:1920:0:0" \
       -c:a copy -c:v libx264 -preset fast -crf 23 \
-      "shorts_prontos/${name}_9x16.mp4"
+      "shorts_prontos/${name}"
   fi
 
 done

@@ -1,11 +1,7 @@
-customtkinter>=5.2.0
-moviepy>=1.0.3
-configparser
-pathlib
-openai-whisper
-google-generativeai
-opencv-python
-pillow
-numpy
+customtkinter
+yt-dlp
 ffmpeg-python
-asyncio
+requests
+google-generativeai
+openai-whisper
+moviepy
