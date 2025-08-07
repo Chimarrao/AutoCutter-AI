@@ -9,7 +9,7 @@ import requests
 import argparse
 import textwrap
 import google.generativeai as genai
-from prompt_template import get_clip_detection_prompt
+from prompt_corte_youtube import get_clip_detection_prompt
 
 # Importa o módulo json no nível do módulo para evitar problemas de escopo
 import json as json_module
@@ -167,7 +167,12 @@ def transcribe_audio(audio_path, whisper_model_size="base"):
     print("⏳ Analisando áudio... (isso pode demorar alguns minutos)")
 
     # Usa o transcribe com verbose=True para mostrar algum progresso
-    result = model.transcribe(audio_path, word_timestamps=True, verbose=True)
+    result = model.transcribe(
+        audio_path,
+        language="pt",  # Força português brasileiro
+        word_timestamps=True,
+        verbose=True
+    )
 
     print("\n📝 Processando segmentos de transcrição...")
 
