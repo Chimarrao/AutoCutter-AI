@@ -10,10 +10,26 @@ import tempfile
 import re
 import yt_dlp
 import urllib.parse
+import unicodedata
 
 # Configurar aparência do CustomTkinter
 ctk.set_appearance_mode("dark")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+
+
+def normalize_filename(filename):
+    """Remove acentos e substitui espaços por underscores no nome do arquivo"""
+    # Remove acentos
+    normalized = unicodedata.normalize('NFD', filename)
+    ascii_filename = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+
+    # Substitui espaços por underscores
+    ascii_filename = ascii_filename.replace(' ', '_')
+
+    # Remove caracteres especiais exceto pontos, hífens e underscores
+    ascii_filename = re.sub(r'[^\w\-_\.]', '', ascii_filename)
+
+    return ascii_filename
 
 
 class ClipGeneratorGUI:
@@ -40,10 +56,12 @@ class ClipGeneratorGUI:
         self.captions = ctk.BooleanVar(value=True)
         self.no_review = ctk.BooleanVar(value=True)
         self.max_segment_duration = ctk.IntVar(value=30)
-        self.temp_dir = ctk.StringVar(value=os.path.join(tempfile.gettempdir(), "video_segments"))
+        self.temp_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "temp"))
         self.downloads_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "downloads"))
+        self.bulk_download_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "bulk_download"))
         self.is_downloading = False
         self.mode = ctk.StringVar(value="clips")
+        self.bulk_urls = ctk.StringVar()
 
         # Fila para comunicação entre threads
         self.output_queue = queue.Queue()
@@ -103,11 +121,13 @@ class ClipGeneratorGUI:
 
         # Tabs
         self.tabview.add("📁 Básico")
+        self.tabview.add("📥 Download em Massa")
         self.tabview.add("⚙️ Avançado")
         self.tabview.add("⚡ Processamento")
 
         # Setup tabs
         self.setup_basic_tab()
+        self.setup_bulk_download_tab()
         self.setup_advanced_tab()
         self.setup_processing_tab()
 
@@ -268,6 +288,162 @@ class ClipGeneratorGUI:
         ctk.CTkLabel(max_frame, text="Máximo:", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
         self.max_spinbox = ctk.CTkEntry(max_frame, textvariable=self.max_clips, width=80, justify="center")
         self.max_spinbox.pack(pady=(0, 10))
+
+    def setup_bulk_download_tab(self):
+        # Frame da aba de download em massa
+        bulk_frame = self.tabview.tab("📥 Download em Massa")
+
+        # Scrollable frame
+        scrollable_frame = ctk.CTkScrollableFrame(bulk_frame)
+        scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Título da seção
+        ctk.CTkLabel(
+            scrollable_frame,
+            text="📥 Download em Massa de Vídeos",
+            font=ctk.CTkFont(size=20, weight="bold")
+        ).pack(pady=(10, 20))
+
+        # Pasta de destino para downloads em massa
+        bulk_folder_frame = ctk.CTkFrame(scrollable_frame)
+        bulk_folder_frame.pack(fill="x", padx=10, pady=10)
+
+        ctk.CTkLabel(
+            bulk_folder_frame,
+            text="📁 Pasta de Destino",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        bulk_folder_input_frame = ctk.CTkFrame(bulk_folder_frame)
+        bulk_folder_input_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.bulk_folder_entry = ctk.CTkEntry(
+            bulk_folder_input_frame,
+            textvariable=self.bulk_download_dir,
+            placeholder_text="Pasta onde os vídeos e thumbnails serão salvos...",
+            height=40,
+            font=ctk.CTkFont(size=14)
+        )
+        self.bulk_folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        ctk.CTkButton(
+            bulk_folder_input_frame,
+            text="📂 Navegar",
+            command=self.browse_bulk_folder,
+            width=120,
+            height=40
+        ).pack(side="right")
+
+        # Lista de URLs
+        urls_frame = ctk.CTkFrame(scrollable_frame)
+        urls_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            urls_frame,
+            text="🔗 URLs do YouTube",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        ctk.CTkLabel(
+            urls_frame,
+            text="Cole as URLs do YouTube, uma por linha:",
+            font=ctk.CTkFont(size=14),
+            text_color="gray70"
+        ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        # TextBox para múltiplas URLs
+        self.bulk_urls_text = ctk.CTkTextbox(
+            urls_frame,
+            height=200,
+            font=ctk.CTkFont(size=12)
+        )
+        self.bulk_urls_text.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+        # Frame para botões
+        bulk_buttons_frame = ctk.CTkFrame(urls_frame)
+        bulk_buttons_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        # Botão para limpar URLs
+        ctk.CTkButton(
+            bulk_buttons_frame,
+            text="🗑️ Limpar",
+            command=self.clear_bulk_urls,
+            width=120,
+            height=40
+        ).pack(side="left", padx=(0, 10))
+
+        # Botão para validar URLs
+        ctk.CTkButton(
+            bulk_buttons_frame,
+            text="✅ Validar URLs",
+            command=self.validate_bulk_urls,
+            width=150,
+            height=40
+        ).pack(side="left", padx=10)
+
+        # Botão para iniciar download em massa
+        self.bulk_download_button = ctk.CTkButton(
+            bulk_buttons_frame,
+            text="📥 Baixar Todos",
+            command=self.start_bulk_download,
+            width=150,
+            height=40,
+            fg_color="green",
+            hover_color="darkgreen"
+        )
+        self.bulk_download_button.pack(side="right")
+
+        # Opções de download
+        options_frame = ctk.CTkFrame(scrollable_frame)
+        options_frame.pack(fill="x", padx=10, pady=10)
+
+        ctk.CTkLabel(
+            options_frame,
+            text="⚙️ Opções de Download",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+
+        # Checkbox para baixar thumbnails
+        self.download_thumbnails = ctk.BooleanVar(value=True)
+        self.thumbnails_checkbox = ctk.CTkCheckBox(
+            options_frame,
+            text="Baixar thumbnails dos vídeos",
+            variable=self.download_thumbnails,
+            font=ctk.CTkFont(size=14)
+        )
+        self.thumbnails_checkbox.pack(anchor="w", padx=20, pady=(0, 10))
+
+        # Formato das thumbnails
+        self.thumbnail_format = ctk.StringVar(value="jpg")
+        thumbnail_format_frame = ctk.CTkFrame(options_frame)
+        thumbnail_format_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(
+            thumbnail_format_frame,
+            text="Formato das thumbnails:",
+            font=ctk.CTkFont(size=12)
+        ).pack(side="left", padx=(0, 10))
+
+        self.thumbnail_format_combo = ctk.CTkComboBox(
+            thumbnail_format_frame,
+            values=["jpg", "png"],
+            variable=self.thumbnail_format,
+            state="readonly",
+            width=80,
+            height=30,
+            font=ctk.CTkFont(size=12)
+        )
+        self.thumbnail_format_combo.pack(side="left")
+
+        # Checkbox para baixar apenas áudio
+        self.audio_only = ctk.BooleanVar(value=False)
+        self.audio_only_checkbox = ctk.CTkCheckBox(
+            options_frame,
+            text="Baixar apenas áudio (MP3)",
+            variable=self.audio_only,
+            font=ctk.CTkFont(size=14)
+        )
+        self.audio_only_checkbox.pack(anchor="w", padx=20, pady=(0, 20))
 
     def setup_advanced_tab(self):
         # Frame da aba avançada
@@ -541,10 +717,25 @@ class ClipGeneratorGUI:
                 elif d['status'] == 'finished':
                     self.output_queue.put(("progress", 100))
                     self.output_queue.put(("status", "✅ Download concluído!"))
-                    self.output_queue.put(("log", f"✅ Download concluído: {d['filename']}\n"))
+
+                    # Normalizar o nome do arquivo baixado
+                    downloaded_file = d['filename']
+                    filename = os.path.basename(downloaded_file)
+                    normalized_filename = normalize_filename(filename)
+
+                    if normalized_filename != filename:
+                        old_path = downloaded_file
+                        new_path = os.path.join(os.path.dirname(old_path), normalized_filename)
+                        try:
+                            os.rename(old_path, new_path)
+                            downloaded_file = new_path
+                            self.output_queue.put(("log", f"📝 Arquivo renomeado: {filename} → {normalized_filename}\n"))
+                        except Exception as e:
+                            self.output_queue.put(("log", f"⚠️ Erro ao renomear arquivo: {e}\n"))
+
+                    self.output_queue.put(("log", f"✅ Download concluído: {normalized_filename}\n"))
 
                     # Definir o arquivo baixado como vídeo atual
-                    downloaded_file = d['filename']
                     self.video_path.set(downloaded_file)
                     self.output_queue.put(("log", f"📁 Arquivo definido como vídeo atual: {downloaded_file}\n"))
 
@@ -620,6 +811,36 @@ class ClipGeneratorGUI:
         dirname = filedialog.askdirectory(title="Selecionar Pasta Temporária")
         if dirname:
             self.temp_dir.set(dirname)
+
+    def browse_bulk_folder(self):
+        dirname = filedialog.askdirectory(title="Selecionar Pasta de Destino")
+        if dirname:
+            self.bulk_download_dir.set(dirname)
+
+    def clear_bulk_urls(self):
+        """Limpar a lista de URLs"""
+        self.bulk_urls_text.delete("1.0", "end")
+
+    def validate_bulk_urls(self):
+        """Validar todas as URLs na lista"""
+        urls = self.bulk_urls_text.get("1.0", "end").strip().split("\n")
+        valid_urls = []
+        invalid_urls = []
+
+        for url in urls:
+            if self.is_valid_youtube_url(url):
+                valid_urls.append(url)
+            else:
+                invalid_urls.append(url)
+
+        # Atualizar lista com URLs válidas
+        self.clear_bulk_urls()
+        if valid_urls:
+            self.bulk_urls_text.insert("end", "\n".join(valid_urls) + "\n")
+
+        # Mostrar mensagem com URLs inválidas, se houver
+        if invalid_urls:
+            messagebox.showwarning("URLs Inválidas", "As seguintes URLs são inválidas e foram removidas:\n" + "\n".join(invalid_urls))
 
     def validate_inputs(self):
         if not self.video_path.get():
@@ -887,6 +1108,177 @@ class ClipGeneratorGUI:
             self.output_queue.put(("error", str(e)))
             self.output_queue.put(("finished", False))
 
+    def start_bulk_download(self):
+        """Iniciar download em massa de vídeos"""
+        urls_text = self.bulk_urls_text.get("1.0", "end").strip()
+
+        if not urls_text:
+            messagebox.showerror("Erro", "Por favor, adicione URLs para download!")
+            return
+
+        urls = [url.strip() for url in urls_text.split("\n") if url.strip()]
+
+        if not urls:
+            messagebox.showerror("Erro", "Nenhuma URL válida encontrada!")
+            return
+
+        if self.is_downloading:
+            messagebox.showwarning("Aviso", "Já existe um download em andamento!")
+            return
+
+        # Criar pasta de download em massa se não existir
+        os.makedirs(self.bulk_download_dir.get(), exist_ok=True)
+
+        # Iniciar download em thread separada
+        self.is_downloading = True
+        self.bulk_download_button.configure(state="disabled")
+        self.tabview.set("⚡ Processamento")
+        self.status_label.configure(text="🔄 Iniciando download em massa...")
+        self.progress_bar.set(0)
+        self.log_text.delete("1.0", "end")
+
+        thread = threading.Thread(target=self.bulk_download_thread, args=(urls,), daemon=True)
+        thread.start()
+
+    def bulk_download_thread(self, urls):
+        """Thread para download em massa de vídeos"""
+        try:
+            total_urls = len(urls)
+            downloaded = 0
+            failed = 0
+
+            self.output_queue.put(("log", f"📥 Iniciando download de {total_urls} vídeos...\n"))
+            self.output_queue.put(("log", f"📁 Pasta de destino: {self.bulk_download_dir.get()}\n\n"))
+
+            for i, url in enumerate(urls, 1):
+                if not self.is_valid_youtube_url(url):
+                    self.output_queue.put(("log", f"❌ URL inválida: {url}\n"))
+                    failed += 1
+                    continue
+
+                self.output_queue.put(("status", f"📥 Baixando {i}/{total_urls}: {url[:50]}..."))
+                self.output_queue.put(("log", f"🔄 Processando {i}/{total_urls}: {url}\n"))
+
+                try:
+                    def progress_hook(d):
+                        if d['status'] == 'downloading':
+                            try:
+                                # Calcular progresso global
+                                video_progress = 0
+                                if 'total_bytes' in d and d['total_bytes']:
+                                    video_progress = (d['downloaded_bytes'] / d['total_bytes']) * 100
+                                elif 'total_bytes_estimate' in d and d['total_bytes_estimate']:
+                                    video_progress = (d['downloaded_bytes'] / d['total_bytes_estimate']) * 100
+
+                                # Progresso global considerando todos os vídeos
+                                global_progress = ((i - 1) / total_urls) * 100 + (video_progress / total_urls)
+                                self.output_queue.put(("progress", min(global_progress, 95)))
+
+                                # Atualizar status com informações de download
+                                speed = d.get('speed', 0)
+                                if speed:
+                                    speed_mb = speed / 1024 / 1024
+                                    self.output_queue.put(("status", f"📥 Baixando {i}/{total_urls} - {speed_mb:.1f} MB/s"))
+
+                            except Exception as e:
+                                self.output_queue.put(("log", f"Erro ao processar progresso: {e}\n"))
+
+                        elif d['status'] == 'finished':
+                            filename = os.path.basename(d['filename'])
+                            # Normalizar o nome do arquivo
+                            normalized_filename = normalize_filename(filename)
+                            if normalized_filename != filename:
+                                old_path = d['filename']
+                                new_path = os.path.join(os.path.dirname(old_path), normalized_filename)
+                                try:
+                                    os.rename(old_path, new_path)
+                                    self.output_queue.put(("log", f"📝 Arquivo renomeado: {filename} → {normalized_filename}\n"))
+                                except Exception as e:
+                                    self.output_queue.put(("log", f"⚠️ Erro ao renomear arquivo: {e}\n"))
+
+                            self.output_queue.put(("log", f"✅ Download concluído: {normalized_filename}\n"))
+
+                    # Configurações do yt-dlp
+                    ydl_opts = {
+                        'format': 'best' if not self.audio_only.get() else 'bestaudio/best',
+                        'outtmpl': os.path.join(self.bulk_download_dir.get(), '%(title)s.%(ext)s'),
+                        'progress_hooks': [progress_hook],
+                        'noplaylist': True,
+                        'writesubtitles': False,
+                        'writeautomaticsub': False,
+                        'writethumbnail': self.download_thumbnails.get(),
+                    }
+
+                    # Configurar formato das thumbnails se habilitado
+                    if self.download_thumbnails.get():
+                        ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', [])
+                        ydl_opts['postprocessors'].append({
+                            'key': 'FFmpegThumbnailsConvertor',
+                            'format': self.thumbnail_format.get(),
+                        })
+
+                    if self.audio_only.get():
+                        if 'postprocessors' not in ydl_opts:
+                            ydl_opts['postprocessors'] = []
+                        ydl_opts['postprocessors'].append({
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'mp3',
+                            'preferredquality': '192',
+                        })
+                        ydl_opts['merge_output_format'] = 'mp3'
+                    else:
+                        ydl_opts['merge_output_format'] = 'mp4'
+
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        # Obter informações do vídeo primeiro
+                        info = ydl.extract_info(url, download=False)
+                        title = info.get('title', 'Vídeo sem título')
+                        uploader = info.get('uploader', 'Desconhecido')
+                        duration = info.get('duration', 0)
+
+                        self.output_queue.put(("log", f"📽️ Título: {title}\n"))
+                        self.output_queue.put(("log", f"📝 Canal: {uploader}\n"))
+                        self.output_queue.put(("log", f"⏱️ Duração: {duration // 60}:{duration % 60:02d}\n"))
+
+                        # Verificar se já existe
+                        normalized_title = normalize_filename(title)
+                        ext = 'mp3' if self.audio_only.get() else 'mp4'
+                        expected_filename = os.path.join(self.bulk_download_dir.get(), f"{normalized_title}.{ext}")
+
+                        if os.path.exists(expected_filename):
+                            self.output_queue.put(("log", f"📁 Arquivo já existe, pulando: {normalized_title}.{ext}\n"))
+                            downloaded += 1
+                        else:
+                            # Baixar o vídeo
+                            ydl.download([url])
+                            downloaded += 1
+
+                        self.output_queue.put(("log", f"✅ Processado {i}/{total_urls}\n\n"))
+
+                except Exception as e:
+                    self.output_queue.put(("log", f"❌ Erro ao baixar {url}: {str(e)}\n\n"))
+                    failed += 1
+
+                # Atualizar progresso global
+                global_progress = (i / total_urls) * 100
+                self.output_queue.put(("progress", global_progress))
+
+            # Finalizar
+            self.output_queue.put(("progress", 100))
+            self.output_queue.put(("status", f"✅ Download em massa concluído!"))
+            self.output_queue.put(("log", f"\n🎉 Download em massa finalizado!\n"))
+            self.output_queue.put(("log", f"✅ Sucessos: {downloaded}\n"))
+            self.output_queue.put(("log", f"❌ Falhas: {failed}\n"))
+            self.output_queue.put(("log", f"📁 Pasta: {self.bulk_download_dir.get()}\n"))
+
+            self.output_queue.put(("bulk_download_finished", True))
+
+        except Exception as e:
+            error_msg = str(e)
+            self.output_queue.put(("log", f"❌ Erro no download em massa: {error_msg}\n"))
+            self.output_queue.put(("status", "❌ Erro no download em massa"))
+            self.output_queue.put(("bulk_download_finished", False))
+
     def check_queue(self):
         try:
             while True:
@@ -910,6 +1302,22 @@ class ClipGeneratorGUI:
                         self.tabview.set("📁 Básico")
                     else:  # Falha
                         messagebox.showerror("Erro", "O download falhou. Verifique o log para mais detalhes.")
+                elif msg_type == "bulk_download_finished":
+                    self.is_downloading = False
+                    self.bulk_download_button.configure(state="normal")
+                    if data:  # Sucesso
+                        messagebox.showinfo("Download em Massa Concluído",
+                                          f"Download em massa concluído!\n\nOs arquivos foram salvos em:\n{self.bulk_download_dir.get()}")
+                        # Abrir pasta de download em massa
+                        if messagebox.askyesno("Abrir Pasta", "Deseja abrir a pasta de download em massa?"):
+                            try:
+                                subprocess.run(["xdg-open", self.bulk_download_dir.get()])
+                            except Exception as e:
+                                print(f"Erro ao abrir pasta: {e}")
+                        # Voltar para a aba de download em massa
+                        self.tabview.set("📥 Download em Massa")
+                    else:  # Falha
+                        messagebox.showerror("Erro", "O download em massa falhou. Verifique o log para mais detalhes.")
                 elif msg_type == "finished":
                     self.is_processing = False
                     self.process_button.configure(state="normal")
