@@ -43,6 +43,7 @@ class ClipGeneratorGUI:
         self.temp_dir = ctk.StringVar(value=os.path.join(tempfile.gettempdir(), "video_segments"))
         self.downloads_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "downloads"))
         self.is_downloading = False
+        self.mode = ctk.StringVar(value="clips")
 
         # Fila para comunicação entre threads
         self.output_queue = queue.Queue()
@@ -395,6 +396,24 @@ class ClipGeneratorGUI:
             width=120,
             height=40
         ).pack(side="right")
+
+        # Modo de Processamento
+        mode_frame = ctk.CTkFrame(scrollable_frame)
+        mode_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(
+            mode_frame,
+            text="🎞️ Modo de Processamento",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(20, 10))
+        self.mode_combo = ctk.CTkComboBox(
+            mode_frame,
+            values=["clips", "summary"],
+            variable=self.mode,
+            state="readonly",
+            height=40,
+            font=ctk.CTkFont(size=14)
+        )
+        self.mode_combo.pack(fill="x", padx=20, pady=(0, 20))
 
     def setup_processing_tab(self):
         # Frame da aba de processamento
@@ -772,7 +791,8 @@ class ClipGeneratorGUI:
                     "--output-dir", self.output_dir.get(),
                     "--min-clips", str(self.min_clips.get()),
                     "--max-clips", str(self.max_clips.get()),
-                    "--whisper-model", self.whisper_model.get()
+                    "--whisper-model", self.whisper_model.get(),
+                    "--mode", self.mode.get()
                 ]
 
                 if self.api_key.get():

@@ -9,12 +9,13 @@ import requests
 import argparse
 import textwrap
 import google.generativeai as genai
-from prompt_corte_youtube import get_clip_detection_prompt
+from prompt_corte_youtube import get_clip_detection_prompt, get_summary_prompt
 
 # Importa o módulo json no nível do módulo para evitar problemas de escopo
 import json as json_module
 
-# Opções de API LLM gratuitas - usaremos a API Google Gemini com limite de uso para o plano gratuito
+
+# Opç��es de API LLM gratuitas - usaremos a API Google Gemini com limite de uso para o plano gratuito
 # Alternativas incluem a HuggingFace Inference API ou outros serviços gratuitos
 # Você pode trocar esta implementação por qualquer outra API LLM gratuita
 class LLMClipFinder:
@@ -28,7 +29,7 @@ class LLMClipFinder:
             print("Nenhuma chave de API do Google Gemini encontrada. Alternando para método alternativo.")
             self.use_gemini = False
             return
-            
+
         try:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
@@ -37,7 +38,8 @@ class LLMClipFinder:
             print(f"Falha ao inicializar a API Gemini: {e}")
             self.use_gemini = False
 
-    def find_interesting_moments(self, transcription_segments, min_clips=3, max_clips=10):
+    def find_interesting_moments(self, transcription_segments, min_clips=3, max_clips=10, mode="clips",
+                                 target_duration=30):
         """Use LLM para identificar momentos interessantes a partir de segmentos de transcrição"""
 
         # Formata os dados da transcrição para o LLM
@@ -47,20 +49,23 @@ class LLMClipFinder:
             end_time = self._format_time(segment["end"])
             transcript_text += f"[{start_time} - {end_time}] {segment['text']}\n"
 
-        # Usa o prompt do arquivo separado
-        prompt = get_clip_detection_prompt(transcript_text, min_clips, max_clips)
+        # Usa o prompt apropriado baseado no modo
+        if mode == "summary":
+            prompt = get_summary_prompt(transcript_text, target_duration)
+        else:
+            prompt = get_clip_detection_prompt(transcript_text, min_clips, max_clips)
 
         if self.use_gemini:
             return self._call_gemini_api(prompt)
         else:
             return self._fallback_extraction(transcription_segments)
-            
+
     def _call_gemini_api(self, prompt):
         """Chama a API Gemini com tratamento de erros adequado"""
         try:
             response = self.model.generate_content(prompt)
             content = response.text
-            
+
             # Tenta analisar o JSON da resposta
             try:
                 # Encontra o JSON na resposta se não for um JSON puro
@@ -68,37 +73,38 @@ class LLMClipFinder:
                 json_match = re.search(r'\{[\s\S]*\}', content)
                 if json_match:
                     content = json_match.group(0)
-                
+
                 import json
                 clip_data = json.loads(content)
                 return clip_data
             except json.JSONDecodeError:
                 print("Falha ao analisar o JSON da resposta do LLM. Usando extração manual.")
                 return self._manually_extract_clips(content)
-                
+
         except Exception as e:
             print(f"Erro ao chamar a API Gemini: {str(e)}")
             return self._fallback_extraction([])  # Passa uma lista vazia como fallback
+
     def _manually_extract_clips(self, content):
         """Extrai informações do clipe manualmente se a análise do JSON falhar"""
         clips = []
-        
+
         # Tenta encontrar e extrair informações do clipe usando regex
         import re
-        
+
         # Procura por padrões como "Start: 01:23" ou "Start time: 01:23"
         start_times = re.findall(r'start(?:\s+time)?:\s*(\d+:\d+)', content, re.IGNORECASE)
         end_times = re.findall(r'end(?:\s+time)?:\s*(\d+:\d+)', content, re.IGNORECASE)
-        
+
         # Extrai tudo entre "Reason:" e a próxima seção como o motivo
         reasons = re.findall(r'reason:\s*(.*?)(?=\n\s*(?:caption|start|end|clip|\d+\.)|\Z)',
                              content, re.IGNORECASE | re.DOTALL)
-        
+
         # Extrai legendas
         captions = re.findall(r'caption:\s*(.*?)(?=\n\s*(?:reason|start|end|clip|\d+\.)|\Z)',
                               content, re.IGNORECASE | re.DOTALL)
-        
-        # Combina as informações extraídas
+
+        # Combina as informações extra��das
         for i in range(min(len(start_times), len(end_times))):
             clip = {
                 "start": start_times[i],
@@ -107,13 +113,13 @@ class LLMClipFinder:
                 "caption": captions[i].strip() if i < len(captions) else "Confira este momento!"
             }
             clips.append(clip)
-        
+
         return {"clips": clips}
-    
+
     def _fallback_extraction(self, transcription_segments):
         """Método de fallback simples se todas as chamadas da API falharem"""
         clips = []
-        
+
         # Agrupa segmentos em clipes potenciais (abordagem simples)
         # Este é um fallback muito básico que apenas seleciona segmentos espaçados uniformemente
         total_segments = len(transcription_segments)
@@ -121,16 +127,16 @@ class LLMClipFinder:
 
         if num_clips == 0 and total_segments > 0:
             num_clips = 1
-        
+
         for i in range(num_clips):
             idx = (i * total_segments) // num_clips
             segment = transcription_segments[idx]
-            
+
             # Calcula o início/fim do clipe (visando clipes de 45-60 segundos)
             clip_mid = (segment["start"] + segment["end"]) / 2
             clip_start = max(0, clip_mid - 25)
             clip_end = min(clip_mid + 25, segment["end"] + 30)
-            
+
             clip = {
                 "start": self._format_time(clip_start),
                 "end": self._format_time(clip_end),
@@ -138,9 +144,9 @@ class LLMClipFinder:
                 "caption": segment["text"][:100] + "..." if len(segment["text"]) > 100 else segment["text"]
             }
             clips.append(clip)
-        
+
         return {"clips": clips}
-    
+
     def _format_time(self, seconds):
         """Formata os segundos no formato mm:ss"""
         minutes = int(seconds // 60)
@@ -171,8 +177,12 @@ def transcribe_audio(audio_path, whisper_model_size="base"):
         audio_path,
         language="pt",  # Força português brasileiro
         word_timestamps=True,
-        verbose=True
+        verbose=False,
+        condition_on_previous_text=False,
     )
+
+    for segment in result["segments"]:
+        print(f"[{segment['start']:.2f}s] {segment['text']}")
 
     print("\n📝 Processando segmentos de transcrição...")
 
@@ -191,7 +201,7 @@ def transcribe_audio(audio_path, whisper_model_size="base"):
             "text": segment["text"],
             "words": segment.get("words", [])
         })
-    
+
     print(f"\n🔧 Processando legendas para {len(segments)} segmentos...")
 
     # Processa os segmentos para criar linhas de texto para as legendas, semelhante ao instaClips.py
@@ -207,7 +217,7 @@ def transcribe_audio(audio_path, whisper_model_size="base"):
                 "start": word["start"],
                 "end": word["end"]
             })
-        
+
         # Cria linhas de texto para as legendas
         width = 1080  # Largura do Instagram
         sample_text = "Sample Text for Calculation"
@@ -220,33 +230,33 @@ def transcribe_audio(audio_path, whisper_model_size="base"):
             font = ImageFont.truetype(font_path, font_size)
         except:
             font = ImageFont.load_default()
-            
+
         temp_img = Image.new('RGB', (1, 1))
         draw = ImageDraw.Draw(temp_img)
-        
+
         # Calcula a largura média do caractere
         bbox = draw.textbbox((0, 0), sample_text, font=font)
         sample_width = bbox[2] - bbox[0]
         char_width = sample_width / len(sample_text)
-        
+
         # Calcula a largura utilizável (80% da largura da tela)
         usable_width = int(width * 0.8)
         chars_per_line = int(usable_width / char_width)
-        
+
         # Cria linhas de texto com base nas palavras
         text_lines = []
         current_line = ""
         line_start_time = None
-        
+
         for word in clip_words:
             word_text = word["text"].strip()
             if not word_text:
                 continue
-                
+
             # Inicia uma nova linha, se necessário
             if line_start_time is None:
                 line_start_time = word["start"]
-            
+
             # Verifica se adicionar esta palavra excede o comprimento da linha
             test_line = current_line + " " + word_text if current_line else word_text
             if len(test_line) > chars_per_line:
@@ -257,14 +267,14 @@ def transcribe_audio(audio_path, whisper_model_size="base"):
                         "start": line_start_time,
                         "end": word["start"]
                     })
-                
+
                 # Inicia uma nova linha com a palavra atual
                 current_line = word_text
                 line_start_time = word["start"]
             else:
                 # Adiciona a palavra à linha atual
                 current_line = test_line
-        
+
         # Adiciona a última linha, se houver
         if current_line:
             text_lines.append({
@@ -272,10 +282,10 @@ def transcribe_audio(audio_path, whisper_model_size="base"):
                 "start": line_start_time,
                 "end": clip_words[-1]["end"] if clip_words else segment["end"]
             })
-            
+
         # Adiciona text_lines ao segmento
         segment["text_lines"] = text_lines
-    
+
     print(f"\n✅ Transcrição concluída! {len(segments)} segmentos processados.")
     return segments
 
@@ -296,10 +306,10 @@ def parse_timestamp(timestamp):
 def review_clips(clips, transcription_segments):
     """Permite que o usuário revise e edite os clipes antes de criá-los"""
     approved_clips = []
-    
+
     print("\n=== Clipes para Revisão ===")
     for i, clip in enumerate(clips):
-        print(f"\nClipe {i+1}:")
+        print(f"\nClipe {i + 1}:")
 
         while True:  # Continua até que o usuário decida aprovar ou pular
             # Exibe as informações atuais do clipe
@@ -310,19 +320,20 @@ def review_clips(clips, transcription_segments):
             # Exibe a transcrição para este período
             start_time = parse_timestamp(clip["start"])
             end_time = parse_timestamp(clip["end"])
-            
+
             print("\n  Transcrição:")
             relevant_segments = []
             for j, segment in enumerate(transcription_segments):
                 if segment["end"] >= start_time and segment["start"] <= end_time:
                     relevant_segments.append((j, segment))
-            
+
             # Exibe os segmentos com índice para referência
             for seg_idx, (trans_idx, segment) in enumerate(relevant_segments):
                 print(f"    [{seg_idx}] {segment['text']}")
-            
+
             # Pergunta pela ação do usuário
-            action = input("\nAções: [a]provar, [e]ditar transcrição, [t]rim temporizações, [s]kip, [n]ext clip: ").lower()
+            action = input(
+                "\nAções: [a]provar, [e]ditar transcrição, [t]rim temporizações, [s]kip, [n]ext clip: ").lower()
 
             if action == 'a':
                 # Adiciona um buffer de um segundo ao início e ao fim
@@ -330,11 +341,12 @@ def review_clips(clips, transcription_segments):
                 approved_clips.append(clip)
                 print("Clipe aprovado!")
                 break
-                
+
             elif action == 'e':
                 # Edita a transcrição
                 if relevant_segments:
-                    seg_to_edit = input("Digite o número do segmento para editar [0, 1, ...] ou 'all' para todos os segmentos: ")
+                    seg_to_edit = input(
+                        "Digite o número do segmento para editar [0, 1, ...] ou 'all' para todos os segmentos: ")
 
                     if seg_to_edit.lower() == 'all':
                         # Edita todos os segmentos
@@ -352,9 +364,10 @@ def review_clips(clips, transcription_segments):
                                 if 'text_lines' in transcription_segments[trans_idx]:
                                     # Cria uma representação melhor em nível de palavra
                                     words = new_text.split()
-                                    seg_duration = transcription_segments[trans_idx]["end"] - transcription_segments[trans_idx]["start"]
+                                    seg_duration = transcription_segments[trans_idx]["end"] - \
+                                                   transcription_segments[trans_idx]["start"]
                                     word_duration = seg_duration / len(words) if words else 0
-                                    
+
                                     new_words = []
                                     for i, word in enumerate(words):
                                         word_start = transcription_segments[trans_idx]["start"] + (i * word_duration)
@@ -364,7 +377,7 @@ def review_clips(clips, transcription_segments):
                                             "start": word_start,
                                             "end": word_end
                                         })
-                                    
+
                                     # Atualiza as palavras no segmento
                                     transcription_segments[trans_idx]['words'] = new_words
 
@@ -372,7 +385,7 @@ def review_clips(clips, transcription_segments):
                                     lines = textwrap.wrap(new_text, width=40)  # Quebra de linha básica
                                     line_count = len(lines)
                                     line_duration = seg_duration / line_count if line_count else 0
-                                    
+
                                     new_text_lines = []
                                     for i, line in enumerate(lines):
                                         line_start = transcription_segments[trans_idx]["start"] + (i * line_duration)
@@ -417,24 +430,24 @@ def review_clips(clips, transcription_segments):
                 new_start = input(f"Novo horário de início (atual: {clip['start']}, formato mm:ss): ")
                 if new_start:
                     clip["start"] = new_start
-                
+
                 new_end = input(f"Novo horário de fim (atual: {clip['end']}, formato mm:ss): ")
                 if new_end:
                     clip["end"] = new_end
-                
+
                 print(f"Horário do clipe atualizado: {clip['start']} até {clip['end']}")
 
             elif action == 's':
                 print("Clipe pulado.")
                 break
-                
+
             elif action == 'n':
                 # Adiciona um buffer de um segundo ao início e ao fim
                 clip = add_time_buffer(clip, buffer_seconds=1)
                 approved_clips.append(clip)
                 print("Indo para o próximo clipe...")
                 break
-                
+
             else:
                 print("Ação inválida. Tente novamente.")
 
@@ -446,15 +459,15 @@ def add_time_buffer(clip, buffer_seconds=1):
     # Analisa os horários atuais
     start_time = parse_timestamp(clip["start"])
     end_time = parse_timestamp(clip["end"])
-    
+
     # Adiciona o buffer (subtrai do início, adiciona ao fim)
     new_start_time = max(0, start_time - buffer_seconds)
     new_end_time = end_time + buffer_seconds
-    
+
     # Formata de volta para mm:ss
     clip["start"] = format_time(new_start_time)
     clip["end"] = format_time(new_end_time)
-    
+
     return clip
 
 
@@ -511,17 +524,17 @@ def create_clip(video_path, clip, output_path, bg_color=(255, 255, 255, 230),
     start_time = parse_timestamp(clip["start"])
     end_time = parse_timestamp(clip["end"])
     duration = end_time - start_time
-    
+
     # Gera nome do arquivo com base na legenda
     if "caption" in clip and clip["caption"]:
         sanitized_caption = sanitize_filename(clip["caption"])
         base_name = sanitized_caption
     else:
         base_name = os.path.splitext(os.path.basename(output_path))[0]
-    
+
     output_dir = os.path.dirname(output_path)
     output_path = os.path.join(output_dir, f"{base_name}.mp4")
-    
+
     # Extrai o clipe do vídeo original com FFmpeg preservando áudio e vídeo
     # Usando -c copy para manter qualidade original e áudio
     extract_cmd = [
@@ -541,9 +554,9 @@ def create_clip(video_path, clip, output_path, bg_color=(255, 255, 255, 230),
     return output_path
 
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Criar clipes de vídeo usando IA para encontrar momentos interessantes")
+    parser = argparse.ArgumentParser(
+        description="Criar clipes de vídeo usando IA para encontrar momentos interessantes")
     parser.add_argument("video_path", help="Caminho para o arquivo de vídeo de entrada")
     parser.add_argument("--output-dir", default="ai_clips", help="Diretório para salvar os clipes de saída")
     parser.add_argument("--min-clips", type=int, default=3, help="Número mínimo de clipes a sugerir")
@@ -552,51 +565,59 @@ def main():
                         help="Tamanho do modelo Whisper a ser usado para transcrição")
     parser.add_argument("--api-key", help="Chave de API para o serviço LLM (opcional)")
     parser.add_argument("--no-review", action="store_true", help="Pular revisão do clipe")
+    parser.add_argument("--mode", default="clips", choices=["clips", "summary"],
+                        help="Modo de processamento: 'clips' para clipes individuais ou 'summary' para resumo condensado")
+    parser.add_argument("--target-duration", type=int, default=8,
+                        help="Duração alvo em minutos para o resumo condensado (apenas no modo summary)")
 
     # Adiciona novos argumentos de personalização de cor
-    parser.add_argument("--bg-color", default="255,255,255,230", help="Cor de fundo para legendas no formato R,G,B,A (padrão: 255,255,255,230)")
-    parser.add_argument("--highlight-color", default="255,226,165,220", help="Cor de destaque para palavras ativas no formato R,G,B,A (padrão: 255,226,165,220)")
+    parser.add_argument("--bg-color", default="255,255,255,230",
+                        help="Cor de fundo para legendas no formato R,G,B,A (padrão: 255,255,255,230)")
+    parser.add_argument("--highlight-color", default="255,226,165,220",
+                        help="Cor de destaque para palavras ativas no formato R,G,B,A (padrão: 255,226,165,220)")
     parser.add_argument("--text-color", default="0,0,0", help="Cor do texto no formato R,G,B (padrão: 0,0,0)")
 
     args = parser.parse_args()
-    
+
     # Analisa os argumentos de cor em tuplas
     bg_color = tuple(map(int, args.bg_color.split(',')))
     highlight_color = tuple(map(int, args.highlight_color.split(',')))
     text_color = tuple(map(int, args.text_color.split(',')))
-    
+
     # Cria o diretório de saída
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
-    
+
     # Etapa 1: Extrair áudio do vídeo
     print("Extraindo áudio do vídeo...")
     audio_path = extract_audio(args.video_path)
-    
+
     # Etapa 2: Transcrever áudio
     print("Transcrevendo áudio...")
     transcription_segments = transcribe_audio(audio_path, args.whisper_model)
-    
+
     # Salva a transcrição em um arquivo
     transcription_path = os.path.join(args.output_dir, "transcription.json")
     with open(transcription_path, "w") as f:
         json.dump(transcription_segments, f, indent=2)
-    
+
     print(f"Transcrição salva em {transcription_path}")
 
     # Etapa 3: Encontrar clipes interessantes usando LLM
     print("Encontrando momentos interessantes usando LLM...")
     clip_finder = LLMClipFinder(api_key=args.api_key)
     clip_suggestions = clip_finder.find_interesting_moments(
-        transcription_segments, 
-        min_clips=args.min_clips, 
-        max_clips=args.max_clips
+        transcription_segments,
+        min_clips=args.min_clips,
+        max_clips=args.max_clips,
+        mode=args.mode,
+        target_duration=args.target_duration
     )
-    
+
     if not clip_suggestions or "clips" not in clip_suggestions or not clip_suggestions["clips"]:
         print("Nenhum clipe interessante encontrado. Saindo.")
         return
-    
+
     clips = clip_suggestions["clips"]
     print(f"Encontrados {len(clips)} clipes potenciais")
 
@@ -604,48 +625,48 @@ def main():
     suggestions_path = os.path.join(args.output_dir, "clip_suggestions.json")
     with open(suggestions_path, "w") as f:
         json.dump(clip_suggestions, f, indent=2)
-    
+
     print(f"Sugestões de clipes salvas em {suggestions_path}")
 
     # Melhora os clipes com segmentos para uma melhor legendagem
     for clip in clips:
         clip_start = parse_timestamp(clip["start"])
         clip_end = parse_timestamp(clip["end"])
-        
+
         # Encontra segmentos que se sobrepõem a este clipe
         clip["segments"] = []
         for segment in transcription_segments:
             if segment["end"] >= clip_start and segment["start"] <= clip_end:
                 clip["segments"].append(segment)
-    
+
     # Etapa 4: Revisar clipes se solicitado
     if not args.no_review:
         print("\nRevisando clipes...")
         approved_clips, updated_transcription = review_clips(clips, transcription_segments)
-        
+
         # Salva a transcrição atualizada
         with open(transcription_path, "w") as f:
             json.dump(updated_transcription, f, indent=2)
         print(f"Transcrição atualizada salva em {transcription_path}")
     else:
         approved_clips = clips
-    
+
     if not approved_clips:
         print("Nenhum clipe aprovado. Saindo.")
         return
-    
+
     # Etapa 5: Criar clipes aprovados
     created_clips = []
     for i, clip in enumerate(approved_clips):
-        print(f"\nCriando clipe {i+1}/{len(approved_clips)}...")
+        print(f"\nCriando clipe {i + 1}/{len(approved_clips)}...")
 
         # Gera nome do arquivo com base na legenda ou recurso de formato numerado
         if "caption" in clip and clip["caption"]:
             sanitized_caption = sanitize_filename(clip["caption"])
             filename = f"{sanitized_caption}.mp4"
         else:
-            filename = f"clip_{i+1}.mp4"
-            
+            filename = f"clip_{i + 1}.mp4"
+
         output_path = os.path.join(args.output_dir, filename)
         try:
             # Certifica-se de atualizar os segmentos em cada clipe com a transcrição mais recente
@@ -658,11 +679,11 @@ def main():
                         # Adiciona uma cópia profunda do segmento para evitar problemas de referência
                         import copy
                         clip["segments"].append(copy.deepcopy(segment))
-                
+
             clip_path = create_clip(
-                args.video_path, 
-                clip, 
-                output_path, 
+                args.video_path,
+                clip,
+                output_path,
                 bg_color=bg_color,
                 highlight_color=highlight_color,
                 text_color=text_color
@@ -671,9 +692,29 @@ def main():
                 created_clips.append(clip_path)
                 print(f"Criado com sucesso o clipe em {clip_path}")
             else:
-                print(f"Falha ao criar o clipe {i+1}")
+                print(f"Falha ao criar o clipe {i + 1}")
         except Exception as e:
-            print(f"Erro ao criar o clipe {i+1}: {str(e)}")
+            print(f"Erro ao criar o clipe {i + 1}: {str(e)}")
+
+    # Etapa 6: Se modo summary, criar vídeo condensado
+    if args.mode == "summary" and created_clips:
+        print(f"\n🎬 Criando vídeo condensado com {len(created_clips)} segmentos...")
+        condensed_video_path = create_condensed_video(created_clips, args.output_dir)
+        if condensed_video_path:
+            print(f"✅ Vídeo condensado criado: {condensed_video_path}")
+
+            # Remove os clipes individuais para manter apenas o condensado
+            for clip_path in created_clips:
+                try:
+                    os.remove(clip_path)
+                    print(f"🗑️ Removido clipe individual: {os.path.basename(clip_path)}")
+                except Exception as e:
+                    print(f"Aviso: Não foi possível remover {clip_path}: {e}")
+
+            # Atualiza a lista de clipes criados
+            created_clips = [condensed_video_path]
+        else:
+            print("❌ Falha ao criar vídeo condensado")
 
     # Etapa 6: Limpar e relatar resultados
     os.remove(audio_path)
@@ -688,10 +729,52 @@ def main():
             } for i, clip_path in enumerate(created_clips)
         ]
     }
-    
+
     metadata_path = os.path.join(args.output_dir, "clips_metadata.json")
     with open(metadata_path, "w") as f:
         json.dump(clips_metadata, f, indent=2)
+
+
+def create_condensed_video(clips_paths, output_dir, output_name="condensed_video.mp4"):
+    """Une múltiplos clipes em um único vídeo condensado"""
+    import tempfile
+
+    # Verifica se há clipes suficientes
+    if not clips_paths or len(clips_paths) < 2:
+        print("Poucos clipes para condensar. Retornando o clipe único.")
+        return clips_paths[0] if clips_paths else None
+
+    # Cria um arquivo temporário com a lista dos clipes
+    with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as f:
+        for clip_path in clips_paths:
+            f.write(f"file '{os.path.abspath(clip_path)}'\n")
+        list_path = f.name
+
+    # Caminho de saída final
+    output_path = os.path.join(output_dir, output_name)
+
+    # Comando FFmpeg para concatenar vídeos
+    command = [
+        "ffmpeg",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_path,
+        "-c", "copy",
+        output_path,
+        "-y"
+    ]
+
+    print(f"🔧 Executando concatenação com FFmpeg: {' '.join(command)}")
+
+    result = subprocess.run(command, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Erro ao criar vídeo condensado: {result.stderr}")
+        return None
+
+    print(f"✅ Vídeo condensado salvo em: {output_path}")
+    return output_path
+
 
 if __name__ == "__main__":
     main()
