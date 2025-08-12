@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import customtkinter as ctk
-from tkinter import filedialog, messagebox
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 import subprocess
 import threading
 import os
@@ -11,11 +11,8 @@ import re
 import yt_dlp
 import urllib.parse
 import unicodedata
-
-# Configurar aparência do CustomTkinter
-ctk.set_appearance_mode("dark")  # Modes: "System" (standard), "Dark", "Light"
-ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
-
+import requests
+import sponsorblock as sb
 
 def normalize_filename(filename):
     """Remove acentos e substitui espaços por underscores no nome do arquivo"""
@@ -34,10 +31,11 @@ def normalize_filename(filename):
 
 class ClipGeneratorGUI:
     def __init__(self):
-        self.root = ctk.CTk()
+        self.root = tk.Tk()
         self.root.title("🎬 Gerador de Clipes com IA")
         self.root.geometry("1280x900")
         self.root.resizable(True, True)
+        self.root.configure(bg='#2b2b2b')
 
         # Arquivo de configuração
         self.config_file = os.path.join(os.path.dirname(__file__), 'user_config.json')
@@ -45,23 +43,37 @@ class ClipGeneratorGUI:
         # Carregar configurações salvas
         self.load_config()
 
-        # Variáveis
-        self.video_path = ctk.StringVar()
-        self.youtube_url = ctk.StringVar()
-        self.output_dir = ctk.StringVar(value="output_folder")
-        self.min_clips = ctk.IntVar(value=3)
-        self.max_clips = ctk.IntVar(value=8)
-        self.whisper_model = ctk.StringVar(value="base")
-        self.api_key = ctk.StringVar(value=self.saved_api_key)
-        self.captions = ctk.BooleanVar(value=True)
-        self.no_review = ctk.BooleanVar(value=True)
-        self.max_segment_duration = ctk.IntVar(value=30)
-        self.temp_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "temp"))
-        self.downloads_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "downloads"))
-        self.bulk_download_dir = ctk.StringVar(value=os.path.join(os.path.dirname(__file__), "bulk_download"))
+        # Variáveis para a aba básica (geração de clipes)
+        self.video_path = tk.StringVar()
+        self.youtube_url = tk.StringVar()
+        self.output_dir = tk.StringVar(value="output_folder")
+        self.min_clips = tk.IntVar(value=3)
+        self.max_clips = tk.IntVar(value=8)
+        self.whisper_model = tk.StringVar(value="base")
+        self.api_key = tk.StringVar(value=self.saved_api_key)
+        self.captions = tk.BooleanVar(value=True)
+        self.no_review = tk.BooleanVar(value=True)
+        self.max_segment_duration = tk.IntVar(value=30)
+        self.temp_dir = tk.StringVar(value=os.path.join(os.path.dirname(__file__), "temp"))
+        self.downloads_dir = tk.StringVar(value=os.path.join(os.path.dirname(__file__), "downloads"))
+        self.bulk_download_dir = tk.StringVar(value=os.path.join(os.path.dirname(__file__), "bulk_download"))
         self.is_downloading = False
-        self.mode = ctk.StringVar(value="clips")
-        self.bulk_urls = ctk.StringVar()
+        self.mode = tk.StringVar(value="clips")
+        self.bulk_urls = tk.StringVar()
+
+        # Variáveis separadas para o Vídeo Maker
+        self.vm_video_path = tk.StringVar()
+        self.vm_personagens = tk.StringVar()
+        self.vm_texto_thumb = tk.StringVar()
+        self.vm_sponsor_block = tk.BooleanVar(value=True)
+        self.vm_black_bars = tk.BooleanVar(value=True)
+        self.vm_black_bars_height = tk.IntVar(value=170)
+        self.vm_cut_last_seconds = tk.BooleanVar(value=True)
+        self.vm_cut_seconds = tk.IntVar(value=20)
+        self.vm_quality = tk.StringVar(value="1080p 30fps")
+        self.vm_video_title = None
+        self.vm_video_id = None
+        self.vm_is_processing = False
 
         # Fila para comunicação entre threads
         self.output_queue = queue.Queue()
@@ -94,556 +106,766 @@ class ClipGeneratorGUI:
             print(f"Erro ao salvar configurações: {e}")
 
     def setup_ui(self):
+        # Configurar style
+        style = ttk.Style()
+        style.theme_use('clam')
+
         # Frame principal
-        main_frame = ctk.CTkFrame(self.root)
+        main_frame = tk.Frame(self.root, bg='#2b2b2b')
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
         # Título
-        title_label = ctk.CTkLabel(
+        title_label = tk.Label(
             main_frame,
             text="🎬 Gerador de Clipes com IA",
-            font=ctk.CTkFont(size=28, weight="bold")
+            font=("Arial", 24, "bold"),
+            bg='#2b2b2b',
+            fg='white'
         )
         title_label.pack(pady=(20, 10))
 
         # Subtitle
-        subtitle_label = ctk.CTkLabel(
+        subtitle_label = tk.Label(
             main_frame,
             text="Transforme seus vídeos em clipes curtos automaticamente",
-            font=ctk.CTkFont(size=16),
-            text_color="gray70"
+            font=("Arial", 12),
+            bg='#2b2b2b',
+            fg='#cccccc'
         )
         subtitle_label.pack(pady=(0, 30))
 
-        # Tabview para organizar as configurações
-        self.tabview = ctk.CTkTabview(main_frame)
-        self.tabview.pack(fill="both", expand=True, padx=20, pady=20)
+        # Notebook para as abas
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # Tabs
-        self.tabview.add("📁 Básico")
-        self.tabview.add("📥 Download em Massa")
-        self.tabview.add("⚙️ Avançado")
-        self.tabview.add("⚡ Processamento")
-
-        # Setup tabs
+        # Criar as abas
         self.setup_basic_tab()
         self.setup_bulk_download_tab()
         self.setup_advanced_tab()
         self.setup_processing_tab()
+        self.setup_video_maker_tab()
+
+    def setup_basic_tab(self):
+        # Frame da aba básica
+        basic_frame = tk.Frame(self.notebook, bg='#3b3b3b')
+        self.notebook.add(basic_frame, text="📁 Básico")
+
+        # Canvas e scrollbar para scroll
+        canvas = tk.Canvas(basic_frame, bg='#3b3b3b', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(basic_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='#3b3b3b')
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Seleção de vídeo
+        video_frame = tk.LabelFrame(scrollable_frame, text="📹 Arquivo de Vídeo",
+                                   font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        video_frame.pack(fill="x", padx=10, pady=10)
+
+        video_input_frame = tk.Frame(video_frame, bg='#3b3b3b')
+        video_input_frame.pack(fill="x", padx=20, pady=20)
+
+        self.video_entry = tk.Entry(
+            video_input_frame,
+            textvariable=self.video_path,
+            font=("Arial", 12),
+            width=50
+        )
+        self.video_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        tk.Button(
+            video_input_frame,
+            text="📂 Navegar",
+            command=self.browse_video,
+            width=12,
+            bg='#555555',
+            fg='white'
+        ).pack(side="right")
+
+        # URL do YouTube
+        youtube_frame = tk.LabelFrame(scrollable_frame, text="🔗 URL do YouTube",
+                                     font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        youtube_frame.pack(fill="x", padx=10, pady=10)
+
+        youtube_input_frame = tk.Frame(youtube_frame, bg='#3b3b3b')
+        youtube_input_frame.pack(fill="x", padx=20, pady=20)
+
+        self.youtube_entry = tk.Entry(
+            youtube_input_frame,
+            textvariable=self.youtube_url,
+            font=("Arial", 12),
+            width=50
+        )
+        self.youtube_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        tk.Button(
+            youtube_input_frame,
+            text="📥 Baixar",
+            command=self.download_youtube_video,
+            width=12,
+            bg='#555555',
+            fg='white'
+        ).pack(side="right")
+
+        # Pasta de saída
+        output_frame = tk.LabelFrame(scrollable_frame, text="📁 Pasta de Saída",
+                                    font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        output_frame.pack(fill="x", padx=10, pady=10)
+
+        output_input_frame = tk.Frame(output_frame, bg='#3b3b3b')
+        output_input_frame.pack(fill="x", padx=20, pady=20)
+
+        self.output_entry = tk.Entry(
+            output_input_frame,
+            textvariable=self.output_dir,
+            font=("Arial", 12),
+            width=50
+        )
+        self.output_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        tk.Button(
+            output_input_frame,
+            text="📂 Navegar",
+            command=self.browse_output,
+            width=12,
+            bg='#555555',
+            fg='white'
+        ).pack(side="right")
+
+        # Número de clipes
+        clips_frame = tk.LabelFrame(scrollable_frame, text="🎯 Quantidade de Clipes",
+                                   font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        clips_frame.pack(fill="x", padx=10, pady=10)
+
+        clips_config_frame = tk.Frame(clips_frame, bg='#3b3b3b')
+        clips_config_frame.pack(fill="x", padx=20, pady=20)
+
+        # Min clips
+        min_frame = tk.Frame(clips_config_frame, bg='#3b3b3b')
+        min_frame.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        tk.Label(min_frame, text="Mínimo:", font=("Arial", 12), bg='#3b3b3b', fg='white').pack(pady=(10, 5))
+        self.min_spinbox = tk.Spinbox(min_frame, textvariable=self.min_clips, from_=1, to=20, width=10, justify="center")
+        self.min_spinbox.pack(pady=(0, 10))
+
+        # Max clips
+        max_frame = tk.Frame(clips_config_frame, bg='#3b3b3b')
+        max_frame.pack(side="right", fill="x", expand=True, padx=(10, 0))
+
+        tk.Label(max_frame, text="Máximo:", font=("Arial", 12), bg='#3b3b3b', fg='white').pack(pady=(10, 5))
+        self.max_spinbox = tk.Spinbox(max_frame, textvariable=self.max_clips, from_=1, to=50, width=10, justify="center")
+        self.max_spinbox.pack(pady=(0, 10))
+
+        clips_frame_2 = tk.LabelFrame(scrollable_frame, text="🎯 Processar",
+                                           font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        clips_frame_2.pack(fill="x", padx=10, pady=10)
+
+        clips_config_frame_2 = tk.Frame(clips_frame_2, bg='#3b3b3b')
+        clips_config_frame_2.pack(fill="x", padx=20, pady=20)
 
         # Frame de botões
-        button_frame = ctk.CTkFrame(main_frame)
+        button_frame = tk.Frame(clips_config_frame_2, bg='#2b2b2b')
         button_frame.pack(fill="x", padx=20, pady=20)
 
         # Botão processar
-        self.process_button = ctk.CTkButton(
+        self.process_button = tk.Button(
             button_frame,
             text="🚀 Processar Vídeo",
             command=self.start_processing,
-            font=ctk.CTkFont(size=16, weight="bold"),
-            height=50,
-            width=200,
-            fg_color="green",
-            hover_color="darkgreen"
+            font=("Arial", 14, "bold"),
+            height=2,
+            width=20,
+            bg='#4CAF50',
+            fg='white',
+            activebackground='#45a049'
         )
         self.process_button.pack(side="left", padx=10, pady=10)
 
         # Botão parar
-        self.stop_button = ctk.CTkButton(
+        self.stop_button = tk.Button(
             button_frame,
             text="⏹️ Parar",
             command=self.stop_processing,
             state="disabled",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            height=50,
-            width=150,
-            fg_color="red",
-            hover_color="darkred"
+            font=("Arial", 14, "bold"),
+            height=2,
+            width=15,
+            bg='#f44336',
+            fg='white',
+            activebackground='#da190b'
         )
         self.stop_button.pack(side="right", padx=10, pady=10)
 
-    def setup_basic_tab(self):
-        # Frame da aba básica
-        basic_frame = self.tabview.tab("📁 Básico")
-
-        # Scrollable frame
-        scrollable_frame = ctk.CTkScrollableFrame(basic_frame)
-        scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
-
-        # Seleção de vídeo
-        video_frame = ctk.CTkFrame(scrollable_frame)
-        video_frame.pack(fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(
-            video_frame,
-            text="📹 Arquivo de Vídeo",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        video_input_frame = ctk.CTkFrame(video_frame)
-        video_input_frame.pack(fill="x", padx=20, pady=(0, 20))
-
-        self.video_entry = ctk.CTkEntry(
-            video_input_frame,
-            textvariable=self.video_path,
-            placeholder_text="Selecione um arquivo de vídeo...",
-            height=40,
-            font=ctk.CTkFont(size=14)
-        )
-        self.video_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        ctk.CTkButton(
-            video_input_frame,
-            text="📂 Navegar",
-            command=self.browse_video,
-            width=120,
-            height=40
-        ).pack(side="right")
-
-        # URL do YouTube
-        youtube_frame = ctk.CTkFrame(scrollable_frame)
-        youtube_frame.pack(fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(
-            youtube_frame,
-            text="🔗 URL do YouTube",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        youtube_input_frame = ctk.CTkFrame(youtube_frame)
-        youtube_input_frame.pack(fill="x", padx=20, pady=(0, 20))
-
-        self.youtube_entry = ctk.CTkEntry(
-            youtube_input_frame,
-            textvariable=self.youtube_url,
-            placeholder_text="Cole a URL do vídeo do YouTube...",
-            height=40,
-            font=ctk.CTkFont(size=14)
-        )
-        self.youtube_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        ctk.CTkButton(
-            youtube_input_frame,
-            text="📥 Baixar",
-            command=self.download_youtube_video,
-            width=120,
-            height=40
-        ).pack(side="right")
-
-        # Pasta de saída
-        output_frame = ctk.CTkFrame(scrollable_frame)
-        output_frame.pack(fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(
-            output_frame,
-            text="📁 Pasta de Saída",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        output_input_frame = ctk.CTkFrame(output_frame)
-        output_input_frame.pack(fill="x", padx=20, pady=(0, 20))
-
-        self.output_entry = ctk.CTkEntry(
-            output_input_frame,
-            textvariable=self.output_dir,
-            placeholder_text="Pasta onde os clipes serão salvos...",
-            height=40,
-            font=ctk.CTkFont(size=14)
-        )
-        self.output_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        ctk.CTkButton(
-            output_input_frame,
-            text="📂 Navegar",
-            command=self.browse_output,
-            width=120,
-            height=40
-        ).pack(side="right")
-
-        # Número de clipes
-        clips_frame = ctk.CTkFrame(scrollable_frame)
-        clips_frame.pack(fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(
-            clips_frame,
-            text="🎯 Quantidade de Clipes",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        clips_config_frame = ctk.CTkFrame(clips_frame)
-        clips_config_frame.pack(fill="x", padx=20, pady=(0, 20))
-
-        # Min clips
-        min_frame = ctk.CTkFrame(clips_config_frame)
-        min_frame.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        ctk.CTkLabel(min_frame, text="Mínimo:", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
-        self.min_spinbox = ctk.CTkEntry(min_frame, textvariable=self.min_clips, width=80, justify="center")
-        self.min_spinbox.pack(pady=(0, 10))
-
-        # Max clips
-        max_frame = ctk.CTkFrame(clips_config_frame)
-        max_frame.pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        ctk.CTkLabel(max_frame, text="Máximo:", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
-        self.max_spinbox = ctk.CTkEntry(max_frame, textvariable=self.max_clips, width=80, justify="center")
-        self.max_spinbox.pack(pady=(0, 10))
-
     def setup_bulk_download_tab(self):
         # Frame da aba de download em massa
-        bulk_frame = self.tabview.tab("📥 Download em Massa")
+        bulk_frame = tk.Frame(self.notebook, bg='#3b3b3b')
+        self.notebook.add(bulk_frame, text="📥 Download em Massa")
 
-        # Scrollable frame
-        scrollable_frame = ctk.CTkScrollableFrame(bulk_frame)
-        scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        # Canvas e scrollbar para scroll
+        canvas = tk.Canvas(bulk_frame, bg='#3b3b3b', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(bulk_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='#3b3b3b')
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         # Título da seção
-        ctk.CTkLabel(
+        tk.Label(
             scrollable_frame,
             text="📥 Download em Massa de Vídeos",
-            font=ctk.CTkFont(size=20, weight="bold")
+            font=("Arial", 16, "bold"),
+            bg='#3b3b3b',
+            fg='white'
         ).pack(pady=(10, 20))
 
         # Pasta de destino para downloads em massa
-        bulk_folder_frame = ctk.CTkFrame(scrollable_frame)
+        bulk_folder_frame = tk.LabelFrame(scrollable_frame, text="📁 Pasta de Destino",
+                                         font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         bulk_folder_frame.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(
-            bulk_folder_frame,
-            text="📁 Pasta de Destino",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
+        bulk_folder_input_frame = tk.Frame(bulk_folder_frame, bg='#3b3b3b')
+        bulk_folder_input_frame.pack(fill="x", padx=20, pady=20)
 
-        bulk_folder_input_frame = ctk.CTkFrame(bulk_folder_frame)
-        bulk_folder_input_frame.pack(fill="x", padx=20, pady=(0, 20))
-
-        self.bulk_folder_entry = ctk.CTkEntry(
+        self.bulk_folder_entry = tk.Entry(
             bulk_folder_input_frame,
             textvariable=self.bulk_download_dir,
-            placeholder_text="Pasta onde os vídeos e thumbnails serão salvos...",
-            height=40,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 12),
+            width=50
         )
         self.bulk_folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        ctk.CTkButton(
+        tk.Button(
             bulk_folder_input_frame,
             text="📂 Navegar",
             command=self.browse_bulk_folder,
-            width=120,
-            height=40
+            width=12,
+            bg='#555555',
+            fg='white'
         ).pack(side="right")
 
         # Lista de URLs
-        urls_frame = ctk.CTkFrame(scrollable_frame)
+        urls_frame = tk.LabelFrame(scrollable_frame, text="🔗 URLs do YouTube",
+                                  font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         urls_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        ctk.CTkLabel(
-            urls_frame,
-            text="🔗 URLs do YouTube",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        ctk.CTkLabel(
+        tk.Label(
             urls_frame,
             text="Cole as URLs do YouTube, uma por linha:",
-            font=ctk.CTkFont(size=14),
-            text_color="gray70"
-        ).pack(anchor="w", padx=20, pady=(0, 10))
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='#cccccc'
+        ).pack(anchor="w", padx=20, pady=(20, 10))
 
         # TextBox para múltiplas URLs
-        self.bulk_urls_text = ctk.CTkTextbox(
+        self.bulk_urls_text = tk.Text(
             urls_frame,
-            height=200,
-            font=ctk.CTkFont(size=12)
+            height=10,
+            font=("Consolas", 10),
+            wrap=tk.WORD
         )
         self.bulk_urls_text.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
         # Frame para botões
-        bulk_buttons_frame = ctk.CTkFrame(urls_frame)
+        bulk_buttons_frame = tk.Frame(urls_frame, bg='#3b3b3b')
         bulk_buttons_frame.pack(fill="x", padx=20, pady=(0, 20))
 
         # Botão para limpar URLs
-        ctk.CTkButton(
+        tk.Button(
             bulk_buttons_frame,
             text="🗑️ Limpar",
             command=self.clear_bulk_urls,
-            width=120,
-            height=40
+            width=12,
+            bg='#555555',
+            fg='white'
         ).pack(side="left", padx=(0, 10))
 
         # Botão para validar URLs
-        ctk.CTkButton(
+        tk.Button(
             bulk_buttons_frame,
             text="✅ Validar URLs",
             command=self.validate_bulk_urls,
-            width=150,
-            height=40
+            width=15,
+            bg='#555555',
+            fg='white'
         ).pack(side="left", padx=10)
 
         # Botão para iniciar download em massa
-        self.bulk_download_button = ctk.CTkButton(
+        self.bulk_download_button = tk.Button(
             bulk_buttons_frame,
             text="📥 Baixar Todos",
             command=self.start_bulk_download,
-            width=150,
-            height=40,
-            fg_color="green",
-            hover_color="darkgreen"
+            width=15,
+            bg='#4CAF50',
+            fg='white'
         )
         self.bulk_download_button.pack(side="right")
 
         # Opções de download
-        options_frame = ctk.CTkFrame(scrollable_frame)
+        options_frame = tk.LabelFrame(scrollable_frame, text="⚙️ Opções de Download",
+                                     font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         options_frame.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(
-            options_frame,
-            text="⚙️ Opções de Download",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
         # Checkbox para baixar thumbnails
-        self.download_thumbnails = ctk.BooleanVar(value=True)
-        self.thumbnails_checkbox = ctk.CTkCheckBox(
+        self.download_thumbnails = tk.BooleanVar(value=True)
+        self.thumbnails_checkbox = tk.Checkbutton(
             options_frame,
             text="Baixar thumbnails dos vídeos",
             variable=self.download_thumbnails,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white',
+            selectcolor='#3b3b3b'
         )
-        self.thumbnails_checkbox.pack(anchor="w", padx=20, pady=(0, 10))
+        self.thumbnails_checkbox.pack(anchor="w", padx=20, pady=(20, 10))
 
         # Formato das thumbnails
-        self.thumbnail_format = ctk.StringVar(value="jpg")
-        thumbnail_format_frame = ctk.CTkFrame(options_frame)
+        self.thumbnail_format = tk.StringVar(value="jpg")
+        thumbnail_format_frame = tk.Frame(options_frame, bg='#3b3b3b')
         thumbnail_format_frame.pack(fill="x", padx=20, pady=(0, 10))
 
-        ctk.CTkLabel(
+        tk.Label(
             thumbnail_format_frame,
             text="Formato das thumbnails:",
-            font=ctk.CTkFont(size=12)
+            font=("Arial", 10),
+            bg='#3b3b3b',
+            fg='white'
         ).pack(side="left", padx=(0, 10))
 
-        self.thumbnail_format_combo = ctk.CTkComboBox(
+        self.thumbnail_format_combo = ttk.Combobox(
             thumbnail_format_frame,
             values=["jpg", "png"],
-            variable=self.thumbnail_format,
+            textvariable=self.thumbnail_format,
             state="readonly",
-            width=80,
-            height=30,
-            font=ctk.CTkFont(size=12)
+            width=10,
+            font=("Arial", 10)
         )
         self.thumbnail_format_combo.pack(side="left")
 
         # Checkbox para baixar apenas áudio
-        self.audio_only = ctk.BooleanVar(value=False)
-        self.audio_only_checkbox = ctk.CTkCheckBox(
+        self.audio_only = tk.BooleanVar(value=False)
+        self.audio_only_checkbox = tk.Checkbutton(
             options_frame,
             text="Baixar apenas áudio (MP3)",
             variable=self.audio_only,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white',
+            selectcolor='#3b3b3b'
         )
         self.audio_only_checkbox.pack(anchor="w", padx=20, pady=(0, 20))
 
     def setup_advanced_tab(self):
         # Frame da aba avançada
-        advanced_frame = self.tabview.tab("⚙️ Avançado")
+        advanced_frame = tk.Frame(self.notebook, bg='#3b3b3b')
+        self.notebook.add(advanced_frame, text="⚙️ Avançado")
 
-        # Scrollable frame
-        scrollable_frame = ctk.CTkScrollableFrame(advanced_frame)
-        scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        # Canvas e scrollbar para scroll
+        canvas = tk.Canvas(advanced_frame, bg='#3b3b3b', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(advanced_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='#3b3b3b')
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         # Modelo Whisper
-        whisper_frame = ctk.CTkFrame(scrollable_frame)
+        whisper_frame = tk.LabelFrame(scrollable_frame, text="Modelo Whisper",
+                                     font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         whisper_frame.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(
-            whisper_frame,
-            text="🎤 Modelo Whisper",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        self.whisper_combo = ctk.CTkComboBox(
+        self.whisper_combo = ttk.Combobox(
             whisper_frame,
             values=["tiny", "base", "small", "medium", "large"],
-            variable=self.whisper_model,
+            textvariable=self.whisper_model,
             state="readonly",
-            height=40,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 12)
         )
-        self.whisper_combo.pack(fill="x", padx=20, pady=(0, 20))
+        self.whisper_combo.pack(fill="x", padx=20, pady=20)
 
         # API Key
-        api_frame = ctk.CTkFrame(scrollable_frame)
+        api_frame = tk.LabelFrame(scrollable_frame, text="Chave API do Google Gemini",
+                                 font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         api_frame.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(
-            api_frame,
-            text="🔑 Chave API do Google Gemini",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        self.api_entry = ctk.CTkEntry(
+        self.api_entry = tk.Entry(
             api_frame,
             textvariable=self.api_key,
-            placeholder_text="Cole sua chave API aqui...",
             show="*",
-            height=40,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 12)
         )
-        self.api_entry.pack(fill="x", padx=20, pady=(0, 20))
+        self.api_entry.pack(fill="x", padx=20, pady=20)
 
         # Opções
-        options_frame = ctk.CTkFrame(scrollable_frame)
+        options_frame = tk.LabelFrame(scrollable_frame, text="Opções",
+                                     font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         options_frame.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(
-            options_frame,
-            text="🎛️ Opções",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
         # Checkbox para não revisar
-        self.no_review_checkbox = ctk.CTkCheckBox(
+        self.no_review_checkbox = tk.Checkbutton(
             options_frame,
             text="Processar sem revisão manual",
             variable=self.no_review,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white',
+            selectcolor='#3b3b3b'
         )
-        self.no_review_checkbox.pack(anchor="w", padx=20, pady=(0, 20))
+        self.no_review_checkbox.pack(anchor="w", padx=20, pady=20)
 
         # Duração máxima do segmento
-        duration_frame = ctk.CTkFrame(scrollable_frame)
+        duration_frame = tk.LabelFrame(scrollable_frame, text="Duração Máxima do Segmento",
+                                      font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         duration_frame.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(
-            duration_frame,
-            text="⏱️ Duração Máxima do Segmento",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        ctk.CTkLabel(
+        tk.Label(
             duration_frame,
             text="Duração máxima de cada segmento em minutos:",
-            font=ctk.CTkFont(size=14)
-        ).pack(anchor="w", padx=20, pady=(0, 10))
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white'
+        ).pack(anchor="w", padx=20, pady=(20, 10))
 
-        self.duration_spinbox = ctk.CTkEntry(
+        self.duration_spinbox = tk.Spinbox(
             duration_frame,
             textvariable=self.max_segment_duration,
-            width=100,
-            justify="center",
-            height=40
+            from_=1,
+            to=120,
+            width=10,
+            justify="center"
         )
         self.duration_spinbox.pack(anchor="w", padx=20, pady=(0, 20))
 
         # Pasta temporária
-        temp_frame = ctk.CTkFrame(scrollable_frame)
+        temp_frame = tk.LabelFrame(scrollable_frame, text="Pasta Temporária",
+                                  font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         temp_frame.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(
-            temp_frame,
-            text="📂 Pasta Temporária",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        ctk.CTkLabel(
+        tk.Label(
             temp_frame,
             text="Pasta onde os segmentos de vídeo serão armazenados temporariamente:",
-            font=ctk.CTkFont(size=14)
-        ).pack(anchor="w", padx=20, pady=(0, 10))
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white'
+        ).pack(anchor="w", padx=20, pady=(20, 10))
 
-        temp_input_frame = ctk.CTkFrame(temp_frame)
+        temp_input_frame = tk.Frame(temp_frame, bg='#3b3b3b')
         temp_input_frame.pack(fill="x", padx=20, pady=(0, 20))
 
-        self.temp_entry = ctk.CTkEntry(
+        self.temp_entry = tk.Entry(
             temp_input_frame,
             textvariable=self.temp_dir,
-            placeholder_text="Pasta temporária...",
-            height=40,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 12)
         )
         self.temp_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        ctk.CTkButton(
+        tk.Button(
             temp_input_frame,
-            text="📂 Navegar",
+            text="Navegar",
             command=self.browse_temp,
-            width=120,
-            height=40
+            width=12,
+            bg='#555555',
+            fg='white'
         ).pack(side="right")
 
         # Modo de Processamento
-        mode_frame = ctk.CTkFrame(scrollable_frame)
+        mode_frame = tk.LabelFrame(scrollable_frame, text="Modo de Processamento",
+                                  font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         mode_frame.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(
-            mode_frame,
-            text="🎞️ Modo de Processamento",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-        self.mode_combo = ctk.CTkComboBox(
+
+        self.mode_combo = ttk.Combobox(
             mode_frame,
             values=["clips", "summary"],
-            variable=self.mode,
+            textvariable=self.mode,
             state="readonly",
-            height=40,
-            font=ctk.CTkFont(size=14)
+            font=("Arial", 12)
         )
-        self.mode_combo.pack(fill="x", padx=20, pady=(0, 20))
+        self.mode_combo.pack(fill="x", padx=20, pady=20)
 
     def setup_processing_tab(self):
         # Frame da aba de processamento
-        processing_frame = self.tabview.tab("⚡ Processamento")
+        processing_frame = tk.Frame(self.notebook, bg='#3b3b3b')
+        self.notebook.add(processing_frame, text="⚡ Processamento")
 
         # Status
-        status_frame = ctk.CTkFrame(processing_frame)
+        status_frame = tk.LabelFrame(processing_frame, text="📊 Status",
+                                    font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         status_frame.pack(fill="x", padx=20, pady=20)
 
-        ctk.CTkLabel(
-            status_frame,
-            text="📊 Status",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        self.status_label = ctk.CTkLabel(
+        self.status_label = tk.Label(
             status_frame,
             text="Aguardando...",
-            font=ctk.CTkFont(size=14),
-            anchor="w"
+            font=("Arial", 12),
+            anchor="w",
+            bg='#3b3b3b',
+            fg='white'
         )
-        self.status_label.pack(fill="x", padx=20, pady=(0, 20))
+        self.status_label.pack(fill="x", padx=20, pady=20)
 
         # Barra de progresso
-        progress_frame = ctk.CTkFrame(processing_frame)
+        progress_frame = tk.LabelFrame(processing_frame, text="📈 Progresso",
+                                      font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         progress_frame.pack(fill="x", padx=20, pady=(0, 20))
 
-        ctk.CTkLabel(
-            progress_frame,
-            text="📈 Progresso",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
-        self.progress_bar = ctk.CTkProgressBar(progress_frame, height=20)
-        self.progress_bar.pack(fill="x", padx=20, pady=(0, 20))
-        self.progress_bar.set(0)
+        self.progress_bar = ttk.Progressbar(progress_frame, length=400, mode='determinate')
+        self.progress_bar.pack(fill="x", padx=20, pady=20)
 
         # Log de saída
-        log_frame = ctk.CTkFrame(processing_frame)
+        log_frame = tk.LabelFrame(processing_frame, text="📝 Log de Processamento",
+                                 font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
         log_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
-        ctk.CTkLabel(
-            log_frame,
-            text="📝 Log de Processamento",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=20, pady=(20, 10))
-
         # Text widget para o log
-        self.log_text = ctk.CTkTextbox(
+        self.log_text = tk.Text(
             log_frame,
-            height=300,
-            font=ctk.CTkFont(family="Consolas", size=12)
+            height=15,
+            font=("Consolas", 10),
+            wrap=tk.WORD
         )
-        self.log_text.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        self.log_text.pack(fill="both", expand=True, padx=20, pady=20)
+
+    def setup_video_maker_tab(self):
+        # Frame da aba Vídeo Maker
+        vm_frame = tk.Frame(self.notebook, bg='#3b3b3b')
+        self.notebook.add(vm_frame, text="🎬 Vídeo Maker")
+
+        # Canvas e scrollbar para scroll
+        canvas = tk.Canvas(vm_frame, bg='#3b3b3b', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(vm_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='#3b3b3b')
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Título da seção
+        tk.Label(
+            scrollable_frame,
+            text="🎬 Criação de Vídeos",
+            font=("Arial", 16, "bold"),
+            bg='#3b3b3b',
+            fg='white'
+        ).pack(pady=(10, 20))
+
+        # Seleção de vídeo separada para o Video Maker
+        video_frame = tk.LabelFrame(scrollable_frame, text="📹 Arquivo de Vídeo",
+                                   font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        video_frame.pack(fill="x", padx=10, pady=10)
+
+        video_input_frame = tk.Frame(video_frame, bg='#3b3b3b')
+        video_input_frame.pack(fill="x", padx=20, pady=20)
+
+        self.vm_video_entry = tk.Entry(
+            video_input_frame,
+            textvariable=self.vm_video_path,
+            font=("Arial", 12),
+            width=50
+        )
+        self.vm_video_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        tk.Button(
+            video_input_frame,
+            text="📂 Navegar",
+            command=self.browse_vm_video,
+            width=12,
+            bg='#555555',
+            fg='white'
+        ).pack(side="right")
+
+        # Personagens
+        personagens_frame = tk.LabelFrame(scrollable_frame, text="👤 Personagens",
+                                         font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        personagens_frame.pack(fill="x", padx=10, pady=10)
+
+        self.personagens_entry = tk.Entry(
+            personagens_frame,
+            textvariable=self.vm_personagens,
+            font=("Arial", 12)
+        )
+        self.personagens_entry.pack(fill="x", padx=20, pady=20)
+
+        # Texto para Thumbnail
+        thumb_frame = tk.LabelFrame(scrollable_frame, text="🖼️ Texto para Thumbnail",
+                                   font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        thumb_frame.pack(fill="x", padx=10, pady=10)
+
+        self.texto_thumb_entry = tk.Entry(
+            thumb_frame,
+            textvariable=self.vm_texto_thumb,
+            font=("Arial", 12)
+        )
+        self.texto_thumb_entry.pack(fill="x", padx=20, pady=20)
+
+        # Opções de Edição
+        edit_options_frame = tk.LabelFrame(scrollable_frame, text="✂️ Opções de Edição",
+                                          font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        edit_options_frame.pack(fill="x", padx=10, pady=10)
+
+        # Sponsor Block
+        self.sponsor_block_checkbox = tk.Checkbutton(
+            edit_options_frame,
+            text="Adicionar Sponsor Block",
+            variable=self.vm_sponsor_block,
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white',
+            selectcolor='#3b3b3b'
+        )
+        self.sponsor_block_checkbox.pack(anchor="w", padx=20, pady=(20, 10))
+
+        # Black Bars
+        self.black_bars_checkbox = tk.Checkbutton(
+            edit_options_frame,
+            text="Adicionar Black Bars",
+            variable=self.vm_black_bars,
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white',
+            selectcolor='#3b3b3b'
+        )
+        self.black_bars_checkbox.pack(anchor="w", padx=20, pady=(0, 10))
+
+        tk.Label(
+            edit_options_frame,
+            text="Altura das Black Bars (px):",
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white'
+        ).pack(anchor="w", padx=20, pady=(10, 5))
+
+        self.black_bars_height_spinbox = tk.Spinbox(
+            edit_options_frame,
+            textvariable=self.vm_black_bars_height,
+            from_=50,
+            to=500,
+            width=10,
+            justify="center"
+        )
+        self.black_bars_height_spinbox.pack(anchor="w", padx=20, pady=(0, 20))
+
+        # Cortar Últimos Segundos
+        self.cut_last_seconds_checkbox = tk.Checkbutton(
+            edit_options_frame,
+            text="Cortar últimos segundos do vídeo",
+            variable=self.vm_cut_last_seconds,
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white',
+            selectcolor='#3b3b3b'
+        )
+        self.cut_last_seconds_checkbox.pack(anchor="w", padx=20, pady=(0, 10))
+
+        tk.Label(
+            edit_options_frame,
+            text="Segundos a serem cortados:",
+            font=("Arial", 11),
+            bg='#3b3b3b',
+            fg='white'
+        ).pack(anchor="w", padx=20, pady=(10, 5))
+
+        self.cut_seconds_spinbox = tk.Spinbox(
+            edit_options_frame,
+            textvariable=self.vm_cut_seconds,
+            from_=1,
+            to=300,
+            width=10,
+            justify="center"
+        )
+        self.cut_seconds_spinbox.pack(anchor="w", padx=20, pady=(0, 20))
+
+        # Qualidade do Vídeo
+        qualidade_frame = tk.LabelFrame(scrollable_frame, text="📺 Qualidade do Vídeo",
+                                       font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        qualidade_frame.pack(fill="x", padx=10, pady=10)
+
+        self.qualidade_combo = ttk.Combobox(
+            qualidade_frame,
+            values=["1080p 30fps", "720p 30fps", "480p 30fps"],
+            textvariable=self.vm_quality,
+            state="readonly",
+            font=("Arial", 12)
+        )
+        self.qualidade_combo.pack(fill="x", padx=20, pady=20)
+
+        # Texto para Prompt
+        prompt_frame = tk.LabelFrame(scrollable_frame, text="📝 Prompt Gerado",
+                                    font=("Arial", 12, "bold"), bg='#3b3b3b', fg='white')
+        prompt_frame.pack(fill="x", padx=10, pady=10)
+
+        self.text_prompt = tk.Text(
+            prompt_frame,
+            height=8,
+            font=("Arial", 11),
+            wrap=tk.WORD
+        )
+        self.text_prompt.pack(fill="both", expand=True, padx=20, pady=(20, 10))
+
+        tk.Button(
+            prompt_frame,
+            text="📋 Copiar Prompt",
+            command=self.copiar_prompt,
+            width=15,
+            bg='#555555',
+            fg='white'
+        ).pack(anchor="e", padx=20, pady=(0, 20))
+
+        # Frame de botões para o Vídeo Maker
+        vm_button_frame = tk.Frame(scrollable_frame, bg='#3b3b3b')
+        vm_button_frame.pack(fill="x", padx=10, pady=10)
+
+        # Botão gerar prompt para thumbnail
+        tk.Button(
+            vm_button_frame,
+            text="🖼️ Gerar Prompt Thumbnail",
+            command=self.gerar_prompt_thumbnail,
+            width=20,
+            height=2,
+            bg='#555555',
+            fg='white'
+        ).pack(side="left", padx=10, pady=10)
+
+        # Botão gerar vídeo
+        self.gerar_video_button = tk.Button(
+            vm_button_frame,
+            text="🎬 Gerar Vídeo",
+            command=self.gerar_video,
+            font=("Arial", 12, "bold"),
+            height=2,
+            width=20,
+            bg='#4CAF50',
+            fg='white'
+        )
+        self.gerar_video_button.pack(side="right", padx=10, pady=10)
 
     def is_valid_youtube_url(self, url):
         """Validar se a URL é válida do YouTube"""
@@ -676,9 +898,9 @@ class ClipGeneratorGUI:
 
         # Iniciar download em thread separada
         self.is_downloading = True
-        self.tabview.set("⚡ Processamento")
+        self.notebook.select(3)  # Mudar para aba de processamento
         self.status_label.configure(text="🔄 Iniciando download do YouTube...")
-        self.progress_bar.set(0)
+        self.progress_bar['value'] = 0
         self.log_text.delete("1.0", "end")
 
         thread = threading.Thread(target=self.download_youtube_video_thread, args=(url,), daemon=True)
@@ -718,10 +940,12 @@ class ClipGeneratorGUI:
                     self.output_queue.put(("progress", 100))
                     self.output_queue.put(("status", "✅ Download concluído!"))
 
-                    # Normalizar o nome do arquivo baixado
+                    # Obter o arquivo baixado
                     downloaded_file = d['filename']
                     filename = os.path.basename(downloaded_file)
-                    normalized_filename = normalize_filename(filename)
+
+                    # Normalizar o nome do arquivo baixado se necessário
+                    normalized_filename = filename
 
                     if normalized_filename != filename:
                         old_path = downloaded_file
@@ -733,7 +957,7 @@ class ClipGeneratorGUI:
                         except Exception as e:
                             self.output_queue.put(("log", f"⚠️ Erro ao renomear arquivo: {e}\n"))
 
-                    self.output_queue.put(("log", f"✅ Download concluído: {normalized_filename}\n"))
+                    self.output_queue.put(("log", f"✅ Download concluído: {os.path.basename(downloaded_file)}\n"))
 
                     # Definir o arquivo baixado como vídeo atual
                     self.video_path.set(downloaded_file)
@@ -741,13 +965,13 @@ class ClipGeneratorGUI:
 
             # Configurações do yt-dlp para melhor qualidade
             ydl_opts = {
-                'format': 'bestvideo+bestaudio/best',  # Sempre baixar na maior resolução possível
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4',
                 'outtmpl': os.path.join(self.downloads_dir.get(), '%(title)s.%(ext)s'),
                 'progress_hooks': [progress_hook],
                 'noplaylist': True,  # Baixar apenas o vídeo, não a playlist
                 'writesubtitles': False,
                 'writeautomaticsub': False,
-                'merge_output_format': 'mp4',  # Forçar saída mp4 se possível
+                'merge_output_format': 'mp4',  # Forçar saída mp4
             }
 
             self.output_queue.put(("status", "🔍 Obtendo informações do vídeo..."))
@@ -783,6 +1007,10 @@ class ClipGeneratorGUI:
 
                 self.output_queue.put(("download_finished", True))
 
+                novo_nome = f"{title}.mp4"
+                os.rename('{title}.mp4', '{novo_nome}')
+                self.vm_video_path = os.path.basename(novo_nome)
+
         except Exception as e:
             error_msg = str(e)
             self.output_queue.put(("log", f"❌ Erro no download: {error_msg}\n"))
@@ -799,6 +1027,19 @@ class ClipGeneratorGUI:
         )
         if filename:
             self.video_path.set(filename)
+            # Limpar URL do YouTube se um arquivo local foi selecionado
+            self.youtube_url.set("")
+
+    def browse_vm_video(self):
+        vm_video_path = filedialog.askopenfilename(
+            title="Selecionar Vídeo",
+            filetypes=[
+                ("Vídeos", "*.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm"),
+                ("Todos os arquivos", "*.*")
+            ]
+        )
+        if vm_video_path:
+            self.vm_video_path.set(vm_video_path)
             # Limpar URL do YouTube se um arquivo local foi selecionado
             self.youtube_url.set("")
 
@@ -888,11 +1129,11 @@ class ClipGeneratorGUI:
         self.process_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status_label.configure(text="Iniciando processamento...")
-        self.progress_bar.set(0)
+        self.progress_bar['value'] = 0
         self.log_text.delete("1.0", "end")
 
         # Mudar para a aba de processamento
-        self.tabview.set("⚡ Processamento")
+        self.notebook.select(3)
 
         # Iniciar thread de processamento
         thread = threading.Thread(target=self.process_video, daemon=True)
@@ -905,13 +1146,18 @@ class ClipGeneratorGUI:
             self.output_queue.put(("finished", False))
 
     def get_video_duration(self, video_path):
-        """Obter duração do vídeo em minutos usando ffprobe"""
+        """Obter duração do vídeo em segundos usando ffprobe"""
         try:
-            cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", video_path]
+            cmd = [
+                "ffprobe", "-v", "quiet",
+                "-show_entries", "format=duration",
+                "-of", "csv=p=0",
+                video_path
+            ]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
                 duration_seconds = float(result.stdout.strip())
-                return duration_seconds / 60  # Converter para minutos
+                return duration_seconds
             return 0
         except Exception as e:
             print(f"Erro ao obter duração do vídeo: {e}")
@@ -925,7 +1171,7 @@ class ClipGeneratorGUI:
             segment_duration_seconds = segment_duration_minutes * 60
 
             # Obter duração total do vídeo
-            total_duration = self.get_video_duration(video_path) * 60  # Em segundos
+            total_duration = self.get_video_duration(video_path)   # Em segundos
 
             if total_duration <= segment_duration_seconds:
                 # Vídeo não precisa ser dividido
@@ -1132,9 +1378,9 @@ class ClipGeneratorGUI:
         # Iniciar download em thread separada
         self.is_downloading = True
         self.bulk_download_button.configure(state="disabled")
-        self.tabview.set("⚡ Processamento")
+        self.notebook.select(3)  # Mudar para aba de processamento
         self.status_label.configure(text="🔄 Iniciando download em massa...")
-        self.progress_bar.set(0)
+        self.progress_bar['value'] = 0
         self.log_text.delete("1.0", "end")
 
         thread = threading.Thread(target=self.bulk_download_thread, args=(urls,), daemon=True)
@@ -1186,7 +1432,7 @@ class ClipGeneratorGUI:
                         elif d['status'] == 'finished':
                             filename = os.path.basename(d['filename'])
                             # Normalizar o nome do arquivo
-                            normalized_filename = normalize_filename(filename)
+                            normalized_filename = filename
                             if normalized_filename != filename:
                                 old_path = d['filename']
                                 new_path = os.path.join(os.path.dirname(old_path), normalized_filename)
@@ -1200,7 +1446,7 @@ class ClipGeneratorGUI:
 
                     # Configurações do yt-dlp
                     ydl_opts = {
-                        'format': 'best' if not self.audio_only.get() else 'bestaudio/best',
+                        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4',
                         'outtmpl': os.path.join(self.bulk_download_dir.get(), '%(title)s.%(ext)s'),
                         'progress_hooks': [progress_hook],
                         'noplaylist': True,
@@ -1241,7 +1487,7 @@ class ClipGeneratorGUI:
                         self.output_queue.put(("log", f"⏱️ Duração: {duration // 60}:{duration % 60:02d}\n"))
 
                         # Verificar se já existe
-                        normalized_title = normalize_filename(title)
+                        normalized_title = title
                         ext = 'mp3' if self.audio_only.get() else 'mp4'
                         expected_filename = os.path.join(self.bulk_download_dir.get(), f"{normalized_title}.{ext}")
 
@@ -1287,7 +1533,7 @@ class ClipGeneratorGUI:
                 if msg_type == "status":
                     self.status_label.configure(text=data)
                 elif msg_type == "progress":
-                    self.progress_bar.set(data / 100)
+                    self.progress_bar['value'] = data
                 elif msg_type == "log":
                     self.log_text.insert("end", data)
                     self.log_text.see("end")
@@ -1299,7 +1545,7 @@ class ClipGeneratorGUI:
                         messagebox.showinfo("Download Concluído",
                                           f"Download do YouTube concluído com sucesso!\n\nO vídeo foi salvo em:\n{self.downloads_dir.get()}")
                         # Voltar para a aba básica
-                        self.tabview.set("📁 Básico")
+                        self.notebook.select(0)
                     else:  # Falha
                         messagebox.showerror("Erro", "O download falhou. Verifique o log para mais detalhes.")
                 elif msg_type == "bulk_download_finished":
@@ -1315,7 +1561,7 @@ class ClipGeneratorGUI:
                             except Exception as e:
                                 print(f"Erro ao abrir pasta: {e}")
                         # Voltar para a aba de download em massa
-                        self.tabview.set("📥 Download em Massa")
+                        self.notebook.select(1)
                     else:  # Falha
                         messagebox.showerror("Erro", "O download em massa falhou. Verifique o log para mais detalhes.")
                 elif msg_type == "finished":
@@ -1331,12 +1577,265 @@ class ClipGeneratorGUI:
                             self.open_output_folder()
                     else:  # Falha
                         messagebox.showerror("Erro", "O processamento falhou. Verifique o log para mais detalhes.")
+                elif msg_type == "vm_finished":
+                    self.vm_is_processing = False
+                    self.gerar_video_button.configure(state="normal")
+                    success, output_file = data
+
+                    if success:  # Sucesso
+                        messagebox.showinfo("Vídeo Processado",
+                                          f"Vídeo processado com sucesso!\n\nO arquivo foi salvo em:\n{output_file}")
+                        # Abrir pasta de saída
+                        if messagebox.askyesno("Abrir Pasta", "Deseja abrir a pasta onde o vídeo foi salvo?"):
+                            try:
+                                folder_path = os.path.dirname(output_file)
+                                subprocess.run(["xdg-open", folder_path])
+                            except Exception as e:
+                                print(f"Erro ao abrir pasta: {e}")
+                        # Voltar para a aba Vídeo Maker
+                        self.notebook.select(4)
+                    else:  # Falha
+                        messagebox.showerror("Erro", "O processamento do vídeo falhou. Verifique o log para mais detalhes.")
 
         except queue.Empty:
             pass
 
         # Agendar próxima verificação
         self.root.after(100, self.check_queue)
+
+    def gerar_video(self):
+        """Gerar vídeo usando o caminho separado do Video Maker"""
+        if not self.vm_video_path.get():
+            messagebox.showerror("Erro", "Por favor, selecione um arquivo de vídeo no Video Maker!")
+            return
+
+        video_path = self.vm_video_path.get()
+
+        if not os.path.exists(video_path):
+            messagebox.showerror("Erro", "O arquivo de vídeo não existe!")
+            return
+
+        duration = self.get_video_duration(video_path)
+        if duration is None:
+            return
+
+        use_sponsor = self.vm_sponsor_block.get()
+        use_bars = self.vm_black_bars.get()
+        try:
+            bars_height = int(self.vm_black_bars_height.get()) if use_bars else 0
+        except:
+            messagebox.showerror("Erro", "Altura das barras inválida.")
+            return
+
+        use_cut = self.vm_cut_last_seconds.get()
+        try:
+            cut_seconds = int(self.vm_cut_seconds.get()) if use_cut else 0
+        except:
+            messagebox.showerror("Erro", "Valor inválido para corte de segundos.")
+            return
+
+        render_opt = self.vm_quality.get()
+        render_map = {
+            "720p 30fps": ("1280:720", 30),
+            "1080p 30fps": ("1920:1080", 30),
+            "480p 30fps": ("854:480", 30),
+        }
+        scale_res, fps = render_map.get(render_opt, ("1920:1080", 30))
+
+        sponsor_segments = []
+        if use_sponsor and self.vm_video_id:
+            sponsor_segments = self.get_sponsor_segments(self.vm_video_id)
+        elif use_sponsor and not self.vm_video_id:
+            if not messagebox.askyesno("Aviso",
+                                       "ID do YouTube não encontrado no arquivo/link.\nNão será possível usar SponsorBlock.\nContinuar sem SponsorBlock?"):
+                return
+
+        # Criar pasta /prontos se não existir
+        prontos_dir = "prontos"
+        os.makedirs(prontos_dir, exist_ok=True)
+
+        # Salvar o arquivo processado na pasta /prontos
+        base_filename = os.path.splitext(os.path.basename(video_path))[0]
+        output_file = os.path.join(prontos_dir, f"{base_filename}_processado.mp4")
+
+        # Iniciar processamento em thread separada
+        self.vm_is_processing = True
+        self.gerar_video_button.configure(state="disabled")
+        self.notebook.select(3)  # Mudar para aba de processamento
+        self.status_label.configure(text="🎬 Processando vídeo...")
+        self.progress_bar['value'] = 0
+        self.log_text.delete("1.0", "end")
+
+        thread = threading.Thread(target=self.process_video_maker,
+                                args=(video_path, output_file, sponsor_segments, bars_height, cut_seconds, scale_res, fps),
+                                daemon=True)
+        thread.start()
+
+    def process_video_maker(self, video_path, output_file, sponsor_segments, bars_height, cut_seconds, scale_res, fps):
+        """Processar vídeo no Video Maker"""
+        try:
+            # Construir filtro complexo
+            duration = self.get_video_duration(video_path)  # retorna segundos
+            print(duration)
+            print(video_path)
+            filter_complex = self.build_filter_complex(
+                duration,  # ✅ Agora é número
+                sponsor_segments,
+                bars_height,
+                cut_seconds,
+                scale_res
+            )
+
+            if filter_complex is None:
+                self.output_queue.put(("vm_finished", (False, "")))
+                return
+
+            cmd = [
+                "ffmpeg", "-y", "-i", video_path,
+                "-filter_complex", filter_complex,
+                "-map", "[vfinal]", "-map", "[aout]",
+                "-r", str(fps),
+                "-c:v", "libx264",
+                "-preset", "slow",
+                "-crf", "18",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                output_file
+            ]
+
+            self.output_queue.put(("log", f"Executando FFmpeg: {' '.join(cmd)}\n"))
+            self.output_queue.put(("status", "🎬 Processando vídeo com FFmpeg..."))
+
+            # Executar comando
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+
+            # Ler saída em tempo real
+            progress_value = 0
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    self.output_queue.put(("log", output))
+
+                    # Atualizar progresso
+                    if "frame=" in output:
+                        progress_value = min(progress_value + 1, 95)
+                        self.output_queue.put(("progress", progress_value))
+
+            # Verificar resultado
+            return_code = process.poll()
+            if return_code == 0:
+                self.output_queue.put(("progress", 100))
+                self.output_queue.put(("status", "✅ Vídeo processado com sucesso!"))
+                self.output_queue.put(("vm_finished", (True, output_file)))
+            else:
+                self.output_queue.put(("vm_finished", (False, "")))
+
+        except Exception as e:
+            self.output_queue.put(("log", f"❌ Erro ao processar vídeo: {str(e)}\n"))
+            self.output_queue.put(("vm_finished", (False, "")))
+
+    def build_filter_complex(self, duration, sponsor_segments, bars_height, cut_last_seconds, scale_res):
+        final_duration = float(duration) - int(cut_last_seconds)
+        if final_duration <= 0:
+            messagebox.showerror("Erro", "O corte dos últimos segundos excede a duração do vídeo.")
+            return None
+
+        intervals = []
+        start = 0.0
+        sorted_segs = sorted(sponsor_segments, key=lambda x: x[0])
+
+        for seg in sorted_segs:
+            seg_start, seg_end = seg
+            if seg_start >= final_duration:
+                break
+            if seg_start > start:
+                intervals.append((start, min(seg_start, final_duration)))
+            start = max(start, seg_end)
+        if start < final_duration:
+            intervals.append((start, final_duration))
+
+        if not intervals:
+            intervals = [(0, final_duration)]
+
+        filter_parts = []
+        for i, (s, e) in enumerate(intervals):
+            filter_parts.append(f"[0:v]trim=start={s}:end={e},setpts=PTS-STARTPTS[v{i}];")
+            filter_parts.append(f"[0:a]atrim=start={s}:end={e},asetpts=PTS-STARTPTS[a{i}];")
+
+        v_streams = "".join([f"[v{i}]" for i in range(len(intervals))])
+        a_streams = "".join([f"[a{i}]" for i in range(len(intervals))])
+
+        filter_parts.append(f"{v_streams}concat=n={len(intervals)}:v=1:a=0[vout];")
+        filter_parts.append(f"{a_streams}concat=n={len(intervals)}:v=0:a=1[aout];")
+
+        if bars_height > 0:
+            # Primeiro escala para a resolução desejada, depois corta as partes de cima e baixo
+            # e adiciona barras pretas para manter o aspect ratio
+            width, height = map(int, scale_res.split(':'))
+            crop_height = height - (bars_height * 2)
+            y_offset = bars_height
+
+            filter_parts.append(f"[vout]scale={scale_res},crop={width}:{crop_height}:0:{y_offset},pad={width}:{height}:0:{bars_height}:black[vfinal]")
+        else:
+            # Se não usar barras, só escala para a resolução desejada
+            filter_parts.append(f"[vout]scale={scale_res}[vfinal]")
+
+        filter_complex = "".join(filter_parts)
+
+        return filter_complex
+
+    def get_sponsor_segments(self, video_id):
+        client = sb.Client()
+        try:
+            segments = client.get_skip_segments(video_id)
+            sponsors = [seg for seg in segments if seg.category == "sponsor"]
+            return [(seg.start, seg.end) for seg in sponsors]
+        except Exception as e:
+            messagebox.showwarning("Aviso", f"Erro na SponsorBlock API~: {e}. Ignorando cortes.")
+            return []
+
+    def gerar_prompt_thumbnail(self):
+        personagens = self.vm_personagens.get().strip()
+        texto_thumb = self.vm_texto_thumb.get().strip()
+        titulo = self.vm_video_title if self.vm_video_title else "TITULO"
+
+        prompt = f"""Gere uma thumbnail no formato 16:9 com qualidade fotográfica e estilo de thumbnail política para YouTube.
+
+Contexto do vídeo: "{titulo}"
+Personagens na imagem: {personagens if personagens else "XXXX,XXXX"}
+Texto em tela (grande, chamativo, cores vibrantes, tipografia semelhante às usadas em thumbnails jornalísticas): "{texto_thumb if texto_thumb else "ESCRITA NA THUMB"}"
+
+Elementos visuais:
+
+Fundo contextual que combine com o título do vídeo
+
+Personagens com expressões faciais fortes e condizentes com o contexto (raiva, surpresa, medo, seriedade, riso irônico, etc.).
+
+Iluminação dramática e contraste alto para destacar os elementos principais.
+
+Texto posicionado de forma clara e legível, mantendo o estilo de cores vibrantes e contorno forte.
+
+Paleta de cores rica, com predominância de amarelo, verde, azul e vermelho (quando apropriado ao tema político).
+
+Não incluir logos de canais.
+Usar composição que atraia cliques e gere curiosidade."""
+
+        self.text_prompt.delete("1.0", tk.END)
+        self.text_prompt.insert(tk.END, prompt)
+
+    def copiar_prompt(self):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.text_prompt.get("1.0", tk.END).strip())
+        messagebox.showinfo("Prompt copiado", "O prompt foi copiado para a área de transferência.")
 
     def open_output_folder(self):
         try:
