@@ -1826,6 +1826,8 @@ Texto posicionado de forma clara e legível, mantendo o estilo de cores vibrante
 
 Paleta de cores rica, com predominância de amarelo, verde, azul e vermelho (quando apropriado ao tema político).
 
+OBS Importante: Não coloque texto e nem rostos, ou algo relevante no 1/4 inferior esquerdo da imagem. Pois eu, manualmente colocarei o rosto do apresentador. Apenas deixe com fundo essa parte ou com trechos não relevantes da imagem.
+
 Não incluir logos de canais.
 Usar composição que atraia cliques e gere curiosidade."""
 
