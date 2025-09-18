@@ -1,17 +1,38 @@
-#!/usr/bin/env python3
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+#!/usr/bin/env python3#!/usr/bin/env python3
+
+"""import tkinter as tk
+
+AutoCutter-AI - Gerador automático de clipes de vídeo usando IAfrom tkinter import filedialog, messagebox, ttk
+
+"""
 import subprocess
+
 import threading
+
+import sys
+import os
+
 import os
 import json
+
 import queue
-import tempfile
+
+# Adicionar src ao pathimport tempfile
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 import re
+
 import yt_dlp
+
+from gui.gui import main
 import urllib.parse
+
 import unicodedata
-import requests
+
+if __name__ == "__main__":
+    import requests
+    main()
+
 import sponsorblock as sb
 import io
 import sys
