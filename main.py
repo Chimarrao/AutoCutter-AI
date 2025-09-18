@@ -13,6 +13,15 @@ import urllib.parse
 import unicodedata
 import requests
 import sponsorblock as sb
+import io
+import sys
+
+# força UTF-8 como padrão
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
 
 def normalize_filename(filename):
     """Remove acentos e substitui espaços por underscores no nome do arquivo"""
@@ -1253,7 +1262,7 @@ class ClipGeneratorGUI:
 
                 # Construir comando
                 cmd = [
-                    "python3", "generateClips.py",
+                    "python", "generateClips.py",
                     segment_path,
                     "--output-dir", self.output_dir.get(),
                     "--min-clips", str(self.min_clips.get()),

@@ -1,0 +1,74 @@
+
+# TODO - GERADOR DE CLIPS
+
+## README.md
+- Criar README com:
+  - Instruções de instalar Python (>=3.10)
+  - Instalar FFmpeg (Linux e Windows)
+  - Instalar dependências Python via requirements.txt
+  - Explicar suporte a GPU/CPU (usuário escolhe)
+  - Mostrar que sistema lista CPU e GPU disponíveis
+  - Explicar estrutura do projeto:
+    /src
+      /gui        -> Interface PyQt5
+      /download   -> Lógica yt-dlp
+      /processing -> Processamento FFmpeg
+      /utils      -> Funções auxiliares (detecção GPU/CPU, paths, etc.)
+    main.py       -> Ponto de entrada
+    requirements.txt
+    README.md
+  - Passo de execução:
+    python main.py
+
+## requirements.txt
+- Criar arquivo com libs:
+  yt-dlp
+  ffmpeg-python
+  moviepy
+  pytube
+  torch
+  numpy
+  pandas
+  pyqt5
+  requests
+  tqdm
+
+## Estrutura de Abas (PyQt5)
+### Aba Básico
+- Campo para URL do YouTube (input simples)
+
+### Aba Download YouTube
+- Nome da aba: "Download YouTube"
+- Download Simples
+- Download em Massa
+- Campo para colar múltiplos URLs
+- Escolher qualidade do vídeo (opções do yt-dlp)
+
+### Aba Avançado
+- Definir duração máxima do segmento (default = 50)
+- Criar pasta temporária automaticamente (forçar criação se não existir)
+
+### Aba Processamento
+- Manter como está (uso do FFmpeg para cortar/juntar vídeos)
+
+### Aba Videomaker
+- Remova tudo, e coloque as funções converter-centro e converter-esquerda (crie uma a direita também).. estão no projeto
+
+## Ajustes Técnicos
+1. FFmpeg com GPU
+   - Opção de escolher CPU (default) ou GPU (NVIDIA → -hwaccel cuda, AMD → -hwaccel vaapi/rocm)
+   - Detectar se GPU está disponível (nvidia-smi, torch.cuda.is_available())
+
+2. Listagem de CPU e GPU
+   - Mostrar CPUs via platform.processor()
+   - Mostrar GPUs via torch.cuda.get_device_name() ou nvidia-smi
+
+3. Corrigir paths com espaços/acentos
+   - Usar subprocess.run([...]) com lista de args em vez de string única
+
+## Interface
+- Migrar interface gráfica de Tkinter para PyQt5
+- Reorganizar diretórios e arquivos do projeto para ficar bem separado
+
+## Bugs
+- Corrigir bug ao abrir arquivos com nome contendo acentos ou espaços

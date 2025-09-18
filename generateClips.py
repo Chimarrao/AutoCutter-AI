@@ -15,7 +15,7 @@ from prompt_corte_youtube import get_clip_detection_prompt, get_summary_prompt
 import json as json_module
 
 
-# Opç��es de API LLM gratuitas - usaremos a API Google Gemini com limite de uso para o plano gratuito
+# Opç  es de API LLM gratuitas - usaremos a API Google Gemini com limite de uso para o plano gratuito
 # Alternativas incluem a HuggingFace Inference API ou outros serviços gratuitos
 # Você pode trocar esta implementação por qualquer outra API LLM gratuita
 class LLMClipFinder:
@@ -104,7 +104,7 @@ class LLMClipFinder:
         captions = re.findall(r'caption:\s*(.*?)(?=\n\s*(?:reason|start|end|clip|\d+\.)|\Z)',
                               content, re.IGNORECASE | re.DOTALL)
 
-        # Combina as informações extra��das
+        # Combina as informações extra  das
         for i in range(min(len(start_times), len(end_times))):
             clip = {
                 "start": start_times[i],
@@ -598,7 +598,7 @@ def main():
 
     # Salva a transcrição em um arquivo
     transcription_path = os.path.join(args.output_dir, "transcription.json")
-    with open(transcription_path, "w") as f:
+    with open(transcription_path, "w", encoding="utf-8") as f:
         json.dump(transcription_segments, f, indent=2)
 
     print(f"Transcrição salva em {transcription_path}")
@@ -623,7 +623,7 @@ def main():
 
     # Salva as sugestões de clipes em um arquivo
     suggestions_path = os.path.join(args.output_dir, "clip_suggestions.json")
-    with open(suggestions_path, "w") as f:
+    with open(suggestions_path, "w", encoding="utf-8") as f:
         json.dump(clip_suggestions, f, indent=2)
 
     print(f"Sugestões de clipes salvas em {suggestions_path}")
@@ -645,7 +645,7 @@ def main():
         approved_clips, updated_transcription = review_clips(clips, transcription_segments)
 
         # Salva a transcrição atualizada
-        with open(transcription_path, "w") as f:
+        with open(transcription_path, "w", encoding="utf-8") as f:
             json.dump(updated_transcription, f, indent=2)
         print(f"Transcrição atualizada salva em {transcription_path}")
     else:
@@ -731,7 +731,7 @@ def main():
     }
 
     metadata_path = os.path.join(args.output_dir, "clips_metadata.json")
-    with open(metadata_path, "w") as f:
+    with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(clips_metadata, f, indent=2)
 
 

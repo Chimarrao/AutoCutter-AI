@@ -24,7 +24,7 @@ Aqui está uma transcrição com carimbos de tempo:
 
 IMPORTANTE: Você deve identificar UM TIPO de conteúdo:
 
-**TIPO 1 - CORTES LONGOS (5+ minutos/300+ segundos)** para YouTube:
+**TIPO 1 - CORTES LONGOS (15+ minutos)** para YouTube:
 - Discussões aprofundadas sobre temas específicos
 - Explicações completas ou tutoriais
 - Histórias longas com desenvolvimento narrativo

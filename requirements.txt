@@ -5,3 +5,5 @@ requests
 google-generativeai
 openai-whisper
 moviepy
+sponsorblock
+opencv-python
