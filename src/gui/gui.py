@@ -6,12 +6,6 @@ import queue
 import threading
 import subprocess
 import tempfile
-import re
-import unicodedata
-import urllib.parse
-import yt_dlp
-import requests
-import sponsorblock as sb
 import io
 
 from PyQt5.QtWidgets import (
@@ -24,57 +18,52 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QPalette, QColor
 
-# força UTF-8 como padrão
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+# Importar funções de processamento
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+import processing
+import transcription
+
+# força UTF-8 como padrão (apenas se stdout estiver disponível)
+# Nota: Esta configuração pode causar problemas em alguns ambientes
+# if hasattr(sys.stdout, 'buffer') and sys.stdout.buffer is not None:
+#     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+# if hasattr(sys.stderr, 'buffer') and sys.stderr.buffer is not None:
+#     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 os.environ["PYTHONIOENCODING"] = "utf-8"
 os.environ["PYTHONUTF8"] = "1"
 
-def normalize_filename(filename):
-    """Remove acentos e substitui espaços por underscores no nome do arquivo"""
-    # Remove acentos
-    normalized = unicodedata.normalize('NFD', filename)
-    ascii_filename = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
-
-    # Substitui espaços por underscores
-    ascii_filename = ascii_filename.replace(' ', '_')
-
-    # Remove caracteres especiais exceto pontos, hífens e underscores
-    ascii_filename = re.sub(r'[^\w\-_\.]', '', ascii_filename)
-
-    return ascii_filename
-
-
 class ClipGeneratorGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🎬 Gerador de Clipes com IA")
-        self.setGeometry(100, 100, 1280, 900)
+        print("ClipGeneratorGUI __init__ called")
 
         # Arquivo de configuração
-        self.config_file = os.path.join(os.path.dirname(__file__), '../../../user_config.json')
+        self.config_file = os.path.join(os.path.dirname(__file__), '..', '..', 'user_config.json')
 
         # Carregar configurações salvas
         self.load_config()
 
-        # Variáveis de configuração da interface
-        self.theme = self.saved_theme  # "light" ou "dark"
-        self.font_size = self.saved_font_size  # tamanho da fonte
+        # Aplicar configurações carregadas
+        self.theme = self.saved_theme
+        self.font_size = self.saved_font_size
 
         # Variáveis para a aba básica (geração de clipes)
         self.video_path = ""
         self.youtube_url = ""
-        self.output_dir = "output_folder"
+        self.output_dir = "saida"
         self.min_clips = 3
         self.max_clips = 8
         self.whisper_model = "base"
         self.api_key = self.saved_api_key
         self.captions = True
+        self.no_review = True
         self.max_segment_duration = 30
-        self.temp_dir = os.path.join(os.path.dirname(__file__), "../../../temp")
-        self.downloads_dir = os.path.join(os.path.dirname(__file__), "../../../downloads")
-        self.bulk_download_dir = os.path.join(os.path.dirname(__file__), "../../../bulk_download")
+        self.temp_dir = os.path.join(os.path.dirname(__file__), '..', '..', "temp")
+        self.downloads_dir = os.path.join(os.path.dirname(__file__), '..', '..', "downloads")
+        self.bulk_download_dir = os.path.join(os.path.dirname(__file__), '..', '..', "bulk_download")
         self.is_downloading = False
         self.mode = "clips"
         self.bulk_urls = ""
@@ -93,31 +82,23 @@ class ClipGeneratorGUI(QMainWindow):
         self.vm_video_id = None
         self.vm_is_processing = False
 
-        # Variáveis para TTS
-        self.tts_text = ""
-        self.tts_output_file = ""
-        self.tts_is_processing = False
-        self.tts_model_loaded = False
-        self.tts_model = None
-        self.tts_device = "cuda"  # padrão GPU
-
-        # Variáveis para geração de imagens
-        self.image_prompt = ""
-        self.image_output_dir = "output_folder"
-        self.image_is_processing = False
-        self.image_model_loaded = False
-        self.image_model = None
-        self.image_device = "cuda"  # padrão GPU
-
         # Fila para comunicação entre threads
         self.output_queue = queue.Queue()
         self.process = None
         self.is_processing = False
 
-        # Criar pastas automaticamente
+        # Variáveis para transcrição
+        self.transcription_video_path = ""
+        self.transcription_segments = []
+        self.transcription_text = ""
+
+        # Criar diretórios necessários
         self.create_directories()
 
+        # Configurar interface
         self.setup_ui()
+
+        # Iniciar verificação de fila
         self.check_queue()
 
     def load_config(self):
@@ -130,8 +111,8 @@ class ClipGeneratorGUI(QMainWindow):
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     self.saved_api_key = config.get('api_key', '')
-                    self.saved_theme = config.get('theme', 'dark')
-                    self.saved_font_size = config.get('font_size', 14)
+                    self.saved_theme = config.get('theme', 'light')
+                    self.saved_font_size = config.get('font_size', 10)
         except Exception as e:
             print(f"Erro ao carregar configuração: {e}")
 
@@ -201,7 +182,7 @@ class ClipGeneratorGUI(QMainWindow):
             self.temp_dir,
             self.downloads_dir,
             self.bulk_download_dir,
-            "prontos"
+            "saida"
         ]
 
         for directory in directories:
@@ -247,8 +228,7 @@ class ClipGeneratorGUI(QMainWindow):
         self.setup_advanced_tab()
         self.setup_processing_tab()
         self.setup_video_maker_tab()
-        self.setup_tts_tab()
-        self.setup_image_tab()
+        self.setup_transcription_tab()
 
     def setup_basic_tab(self):
         # Frame da aba básica
@@ -593,161 +573,6 @@ class ClipGeneratorGUI(QMainWindow):
         self.vm_log = QTextEdit()
         layout.addWidget(self.vm_log)
 
-    def setup_tts_tab(self):
-        tts_widget = QWidget()
-        self.tab_widget.addTab(tts_widget, "🗣️ TTS")
-
-        layout = QVBoxLayout(tts_widget)
-
-        # Explicação sobre carregamento do modelo
-        info_group = QGroupBox("ℹ️ Informações")
-        info_layout = QVBoxLayout(info_group)
-
-        info_label = QLabel("A primeira geração pode demorar mais pois precisa carregar o modelo de IA.\nModelo usado: XTTS v2 (multilingual) - Speaker: Damien Black")
-        info_label.setWordWrap(True)
-        info_layout.addWidget(info_label)
-
-        layout.addWidget(info_group)
-
-        # Texto para TTS
-        text_group = QGroupBox("📝 Texto para Conversão")
-        text_layout = QVBoxLayout(text_group)
-
-        self.tts_text_edit = QTextEdit()
-        self.tts_text_edit.setPlaceholderText("Digite o texto que deseja converter em áudio (será dividido automaticamente em blocos)...")
-        text_layout.addWidget(self.tts_text_edit)
-
-        layout.addWidget(text_group)
-
-        # Configurações
-        config_group = QGroupBox("⚙️ Configurações")
-        config_layout = QFormLayout(config_group)
-
-        # Dispositivo (GPU/CPU)
-        device_layout = QHBoxLayout()
-        self.tts_device_group = QButtonGroup()
-
-        self.tts_gpu_radio = QRadioButton("GPU (CUDA)")
-        self.tts_gpu_radio.clicked.connect(lambda: self.set_tts_device("cuda"))
-        self.tts_device_group.addButton(self.tts_gpu_radio)
-        device_layout.addWidget(self.tts_gpu_radio)
-
-        self.tts_cpu_radio = QRadioButton("CPU")
-        self.tts_cpu_radio.clicked.connect(lambda: self.set_tts_device("cpu"))
-        self.tts_device_group.addButton(self.tts_cpu_radio)
-        device_layout.addWidget(self.tts_cpu_radio)
-
-        # Definir GPU como padrão
-        self.tts_gpu_radio.setChecked(True)
-
-        config_layout.addRow("Processar via:", device_layout)
-
-        layout.addWidget(config_group)
-
-        # Arquivo de saída
-        output_group = QGroupBox("📁 Arquivo de Saída")
-        output_layout = QVBoxLayout(output_group)
-
-        self.tts_output_entry = QLineEdit()
-        self.tts_output_entry.setPlaceholderText("Nome do arquivo de saída (ex: audio_final.wav)")
-        output_layout.addWidget(self.tts_output_entry)
-
-        layout.addWidget(output_group)
-
-        # Botão gerar TTS
-        self.tts_generate_btn = QPushButton("🎵 Gerar Áudio TTS")
-        self.tts_generate_btn.clicked.connect(self.start_tts_generation)
-        layout.addWidget(self.tts_generate_btn)
-
-        # Progress
-        self.tts_progress = QProgressBar()
-        self.tts_progress.setVisible(False)
-        layout.addWidget(self.tts_progress)
-
-        # Log
-        self.tts_log = QTextEdit()
-        self.tts_log.setMaximumHeight(150)
-        layout.addWidget(self.tts_log)
-
-    def setup_image_tab(self):
-        image_widget = QWidget()
-        self.tab_widget.addTab(image_widget, "🎨 Imagens IA")
-
-        layout = QVBoxLayout(image_widget)
-
-        # Explicação sobre carregamento do modelo
-        info_group = QGroupBox("ℹ️ Informações")
-        info_layout = QVBoxLayout(info_group)
-
-        info_label = QLabel("A primeira geração pode demorar mais pois precisa carregar o modelo de IA.\nModelo usado: Stable Diffusion XL - Gera imagens em 1920x1080 (16:9)")
-        info_label.setWordWrap(True)
-        info_layout.addWidget(info_label)
-
-        layout.addWidget(info_group)
-
-        # Prompt para geração
-        prompt_group = QGroupBox("📝 Prompt de Geração")
-        prompt_layout = QVBoxLayout(prompt_group)
-
-        self.image_prompt_edit = QTextEdit()
-        self.image_prompt_edit.setPlaceholderText("Descreva a imagem que deseja gerar...")
-        prompt_layout.addWidget(self.image_prompt_edit)
-
-        layout.addWidget(prompt_group)
-
-        # Configurações
-        config_group = QGroupBox("⚙️ Configurações")
-        config_layout = QFormLayout(config_group)
-
-        # Dispositivo (GPU/CPU)
-        device_layout = QHBoxLayout()
-        self.image_device_group = QButtonGroup()
-
-        self.image_gpu_radio = QRadioButton("GPU (CUDA)")
-        self.image_gpu_radio.clicked.connect(lambda: self.set_image_device("cuda"))
-        self.image_device_group.addButton(self.image_gpu_radio)
-        device_layout.addWidget(self.image_gpu_radio)
-
-        self.image_cpu_radio = QRadioButton("CPU")
-        self.image_cpu_radio.clicked.connect(lambda: self.set_image_device("cpu"))
-        self.image_device_group.addButton(self.image_cpu_radio)
-        device_layout.addWidget(self.image_cpu_radio)
-
-        # Definir GPU como padrão
-        self.image_gpu_radio.setChecked(True)
-
-        config_layout.addRow("Processar via:", device_layout)
-
-        layout.addWidget(config_group)
-
-        # Pasta de saída
-        output_group = QGroupBox("Pasta de Saída")
-        output_layout = QVBoxLayout(output_group)
-
-        self.image_output_entry = QLineEdit(self.image_output_dir)
-        output_layout.addWidget(self.image_output_entry)
-
-        browse_image_output_btn = QPushButton("📂 Navegar")
-        browse_image_output_btn.clicked.connect(self.browse_image_output)
-        output_layout.addWidget(browse_image_output_btn)
-
-        layout.addWidget(output_group)
-
-        # Botão gerar imagem
-        self.image_generate_btn = QPushButton("🎨 Gerar Imagem")
-        self.image_generate_btn.clicked.connect(self.start_image_generation)
-        layout.addWidget(self.image_generate_btn)
-
-        # Progress
-        self.image_progress = QProgressBar()
-        self.image_progress.setVisible(False)
-        layout.addWidget(self.image_progress)
-
-        # Log
-        self.image_log = QTextEdit()
-        self.image_log.setMaximumHeight(150)
-        layout.addWidget(self.image_log)
-
     # Métodos de navegação
     def browse_video(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Selecionar Vídeo", "", "Vídeos (*.mp4 *.avi *.mkv *.mov)")
@@ -779,27 +604,16 @@ class ClipGeneratorGUI(QMainWindow):
             self.bulk_folder_entry.setText(folder)
             self.bulk_download_dir = folder
 
-    def browse_image_output(self):
-        folder = QFileDialog.getExistingDirectory(self, "Selecionar Pasta para Imagens Geradas")
-        if folder:
-            self.image_output_entry.setText(folder)
-            self.image_output_dir = folder
-
     def clear_bulk_urls(self):
         self.bulk_urls_text.clear()
 
-    # Outros métodos (implementar)
-    def download_youtube_video(self):
-        # Implementar download
-        pass
+    def start_bulk_download(self):
+        """Iniciar download em massa de vídeos"""
+        processing.start_bulk_download(self)
 
     def start_processing(self):
-        # Implementar processamento
-        pass
-
-    def start_bulk_download(self):
-        # Implementar download em massa
-        pass
+        """Iniciar processamento de vídeo"""
+        processing.start_processing(self)
 
     def start_device_detection(self):
         """Iniciar detecção de dispositivos em thread separada"""
@@ -809,96 +623,8 @@ class ClipGeneratorGUI(QMainWindow):
         self.device_progress.setValue(0)
 
         # Iniciar thread de detecção
-        thread = threading.Thread(target=self.detect_devices_thread, daemon=True)
+        thread = threading.Thread(target=processing.detect_devices_thread, args=(self,), daemon=True)
         thread.start()
-
-    def detect_devices_thread(self):
-        """Thread para detectar dispositivos com barra de progresso"""
-        try:
-            devices = []
-
-            # Etapa 1: Detectar CPUs
-            self.output_queue.put(("device_progress", 20))
-            self.output_queue.put(("device_status", "Detectando CPU..."))
-            try:
-                import platform
-                cpu_info = platform.processor()
-                if cpu_info and cpu_info.strip():
-                    devices.append(f"CPU: {cpu_info}")
-                else:
-                    devices.append("CPU: Disponível")
-            except Exception as e:
-                devices.append(f"CPU: Disponível (erro: {str(e)})")
-
-            # Etapa 2: Detectar GPUs NVIDIA
-            self.output_queue.put(("device_progress", 40))
-            self.output_queue.put(("device_status", "Detectando GPUs NVIDIA..."))
-            try:
-                # Usar timeout mais curto e verificar se o comando existe
-                result = subprocess.run(['nvidia-smi', '--query-gpu=name', '--format=csv,noheader,nounits'],
-                                      capture_output=True, text=True, timeout=3)
-                if result.returncode == 0 and result.stdout.strip():
-                    gpu_names = result.stdout.strip().split('\n')
-                    for i, name in enumerate(gpu_names):
-                        if name.strip():
-                            devices.append(f"NVIDIA GPU {i}: {name.strip()}")
-                else:
-                    devices.append("NVIDIA: Não detectado")
-            except subprocess.TimeoutExpired:
-                devices.append("NVIDIA: Timeout na detecção")
-            except FileNotFoundError:
-                devices.append("NVIDIA: Driver não instalado")
-            except Exception as e:
-                devices.append(f"NVIDIA: Erro ({str(e)})")
-
-            # Etapa 3: Detectar GPUs AMD
-            self.output_queue.put(("device_progress", 60))
-            self.output_queue.put(("device_status", "Detectando GPUs AMD..."))
-            try:
-                result = subprocess.run(['rocminfo'], capture_output=True, text=True, timeout=3)
-                if result.returncode == 0 and "AMD" in result.stdout:
-                    devices.append("AMD GPU: ROCm detectado")
-                else:
-                    devices.append("AMD: Não detectado")
-            except subprocess.TimeoutExpired:
-                devices.append("AMD: Timeout na detecção")
-            except FileNotFoundError:
-                devices.append("AMD: ROCm não instalado")
-            except Exception as e:
-                devices.append(f"AMD: Erro ({str(e)})")
-
-            # Etapa 4: Detectar via torch
-            self.output_queue.put(("device_progress", 80))
-            self.output_queue.put(("device_status", "Detectando via PyTorch..."))
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    device_count = torch.cuda.device_count()
-                    if device_count > 0:
-                        for i in range(device_count):
-                            name = torch.cuda.get_device_name(i)
-                            devices.append(f"CUDA GPU {i}: {name}")
-                    else:
-                        devices.append("PyTorch CUDA: GPUs detectadas mas count=0")
-                else:
-                    devices.append("PyTorch CUDA: Não disponível")
-            except ImportError:
-                devices.append("PyTorch: Não instalado")
-            except Exception as e:
-                devices.append(f"PyTorch: Erro ({str(e)})")
-
-            # Etapa 5: Finalizar
-            self.output_queue.put(("device_progress", 100))
-            self.output_queue.put(("device_status", "Detecção concluída"))
-
-            if not devices:
-                devices.append("Nenhum dispositivo detectado")
-
-            # Atualizar lista na thread principal
-            self.output_queue.put(("device_list", devices))
-
-        except Exception as e:
-            self.output_queue.put(("device_error", f"Erro geral na detecção: {str(e)}"))
 
     def process_thread_messages(self):
         """Processar mensagens da fila de saída da thread"""
@@ -906,7 +632,39 @@ class ClipGeneratorGUI(QMainWindow):
             while not self.output_queue.empty():
                 message_type, data = self.output_queue.get_nowait()
 
-                if message_type == "device_progress":
+                if message_type == "progress":
+                    self.progress_bar.setValue(data)
+                elif message_type == "log":
+                    self.log_text.append(data.strip())
+                elif message_type == "error":
+                    QMessageBox.critical(self, "Erro", data)
+                    self.process_btn.setEnabled(True)
+                elif message_type == "finished":
+                    self.process_btn.setEnabled(True)
+                    if data:  # Sucesso
+                        QMessageBox.information(self, "Processamento Concluído",
+                                              "Geração de clipes concluída com sucesso!")
+                        # Voltar para aba básica
+                        self.tab_widget.setCurrentIndex(0)
+                elif message_type == "bulk_progress":
+                    self.bulk_progress.setValue(data)
+                elif message_type == "bulk_log":
+                    self.bulk_log.append(data.strip())
+                elif message_type == "bulk_status":
+                    # Atualizar status na aba de processamento
+                    if hasattr(self, 'processing_log'):
+                        self.processing_log.append(f"Status: {data}")
+                elif message_type == "bulk_download_finished":
+                    self.is_downloading = False
+                    self.bulk_download_btn.setEnabled(True)
+                    if data:  # Sucesso
+                        QMessageBox.information(self, "Download em Massa Concluído",
+                                              f"Download em massa concluído!\n\nOs arquivos foram salvos em:\n{self.bulk_download_dir}")
+                        # Voltar para a aba de download em massa
+                        self.tab_widget.setCurrentIndex(1)
+                    else:  # Falha
+                        QMessageBox.critical(self, "Erro", "O download em massa falhou. Verifique o log para mais detalhes.")
+                elif message_type == "device_progress":
                     self.device_progress.setValue(data)
                 elif message_type == "device_status":
                     # Atualizar o último item da lista com status
@@ -923,378 +681,207 @@ class ClipGeneratorGUI(QMainWindow):
                     self.device_list.clear()
                     self.device_list.addItem(f"Erro: {data}")
                     self.device_progress.setVisible(False)
-                elif message_type == "tts_progress":
-                    self.tts_progress.setValue(data)
-                elif message_type == "tts_log":
-                    self.tts_log.append(data)
-                elif message_type == "tts_complete":
-                    self.tts_progress.setVisible(False)
-                    self.tts_generate_btn.setEnabled(True)
-                    QMessageBox.information(self, "Sucesso", f"TTS gerado com sucesso!\nArquivo: {self.tts_output_file}")
-                elif message_type == "tts_error":
-                    self.tts_progress.setVisible(False)
-                    self.tts_generate_btn.setEnabled(True)
-                    QMessageBox.critical(self, "Erro", data)
-                elif message_type == "image_progress":
-                    self.image_progress.setValue(data)
-                elif message_type == "image_log":
-                    self.image_log.append(data)
-                elif message_type == "image_complete":
-                    self.image_progress.setVisible(False)
-                    self.image_generate_btn.setEnabled(True)
-                    QMessageBox.information(self, "Sucesso", "Imagem gerada com sucesso!")
-                elif message_type == "image_error":
-                    self.image_progress.setVisible(False)
-                    self.image_generate_btn.setEnabled(True)
-                    QMessageBox.critical(self, "Erro", data)
+                elif message_type == "transcription_progress":
+                    if hasattr(self, 'transcription_progress'):
+                        self.transcription_progress.setValue(data)
+                elif message_type == "transcription_status":
+                    if hasattr(self, 'transcription_status_label'):
+                        self.transcription_status_label.setText(data)
+                elif message_type == "transcription_result":
+                    self.display_transcription_results(data)
+                elif message_type == "transcription_error":
+                    QMessageBox.critical(self, "Erro na Transcrição", data)
+                elif message_type == "render_status":
+                    if hasattr(self, 'render_status_label'):
+                        self.render_status_label.setText(data)
+                elif message_type == "render_error":
+                    QMessageBox.critical(self, "Erro na Renderização", data)
+                elif message_type == "render_success":
+                    QMessageBox.information(self, "Renderização Concluída",
+                                          f"Vídeo com legendas criado com sucesso!\n\nArquivo: {data}")
         except:
             pass
-
-    def start_tts_generation(self):
-        """Iniciar geração de TTS em thread separada"""
-        text = self.tts_text_edit.toPlainText().strip()
-        if not text:
-            QMessageBox.warning(self, "Erro", "Digite um texto para converter em áudio.")
-            return
-
-        output_file = self.tts_output_entry.text().strip()
-        if not output_file:
-            output_file = "tts_output.mp3"
-        if not output_file.endswith('.mp3'):
-            output_file += '.mp3'
-
-        self.tts_text = text
-        self.tts_output_file = output_file
-
-        # Mostrar barra de progresso
-        self.tts_progress.setVisible(True)
-        self.tts_progress.setValue(0)
-        self.tts_generate_btn.setEnabled(False)
-        self.tts_log.clear()
-        self.tts_log.append("Iniciando geração de TTS...")
-
-        # Iniciar thread de TTS
-        thread = threading.Thread(target=self.generate_tts_thread, daemon=True)
-        thread.start()
-
-    def set_tts_device(self, device):
-        """Define o dispositivo para TTS"""
-        self.tts_device = device
-        # Resetar modelo se dispositivo mudou
-        if self.tts_model_loaded and self.tts_model is not None:
-            try:
-                del self.tts_model
-                self.tts_model = None
-                self.tts_model_loaded = False
-            except:
-                pass
-
-    def load_tts_model(self):
-        """Carrega o modelo TTS se não estiver carregado"""
-        if self.tts_model_loaded and self.tts_model is not None:
-            return True
-
-        try:
-            from TTS.api import TTS
-            import torch
-
-            self.output_queue.put(("tts_log", f"Carregando modelo XTTS v2 no {self.tts_device.upper()}..."))
-
-            # Configurar torch para usar o dispositivo correto
-            if self.tts_device == "cuda" and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                device = "cuda"
-            else:
-                device = "cpu"
-
-            # Permitir carregamento seguro do modelo TTS usando contexto manager
-            try:
-                from TTS.tts.configs import xtts_config
-                from TTS.tts.models.xtts import XttsAudioConfig
-                with torch.serialization.safe_globals([xtts_config.XttsConfig, XttsAudioConfig]):
-                    # Inicializar modelo dentro do contexto seguro
-                    self.tts_model = TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2", gpu=(device == "cuda"))
-            except Exception as e:
-                # Fallback: tentar forçar weights_only=False
-                try:
-                    # Monkey patch temporário para forçar weights_only=False
-                    original_load = torch.load
-                    def patched_load(*args, **kwargs):
-                        kwargs['weights_only'] = False
-                        return original_load(*args, **kwargs)
-                    torch.load = patched_load
-
-                    self.tts_model = TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2", gpu=(device == "cuda"))
-
-                    # Restaurar função original
-                    torch.load = original_load
-                except Exception as e2:
-                    raise e  # Levantar erro original
-
-            self.tts_model.to(device)
-
-            self.tts_model_loaded = True
-            self.output_queue.put(("tts_log", "Modelo XTTS v2 carregado com sucesso!"))
-            return True
-
-        except Exception as e:
-            self.output_queue.put(("tts_error", f"Erro ao carregar modelo TTS: {str(e)}"))
-            return False
-
-    def limpar_texto_tts(self, texto):
-        """Limpa o texto conforme tts.py"""
-        import re
-
-        # Remover emojis
-        emoji_pattern = re.compile(
-            "["
-            "\U0001F600-\U0001F64F"  # emoticons
-            "\U0001F300-\U0001F5FF"  # symbols & pictographs
-            "\U0001F680-\U0001F6FF"  # transport & map symbols
-            "\U0001F1E0-\U0001F1FF"  # flags (iOS)
-            "\U00002700-\U000027BF"  # dingbats
-            "\U0001f926-\U0001f937"  # gestures
-            "\U00010000-\U0010ffff"  # other unicode
-            "\u2640-\u2642"  # gender symbols
-            "\u2600-\u2B55"  # misc symbols
-            "\u200d"  # zero width joiner
-            "\u23cf"  # eject symbol
-            "\u23e9"  # fast forward
-            "\u231a"  # watch
-            "\ufe0f"  # variation selector
-            "\u3030"  # wavy dash
-            "]+",
-            flags=re.UNICODE
-        )
-        texto = emoji_pattern.sub('', texto)
-
-        # Remover traços longos
-        texto = texto.replace('—', '').replace('–', '')
-
-        # Remover pontos duplos
-        texto = re.sub(r'\.{2,}', '', texto)
-
-        # Troca ponto por quebra de linha
-        texto = texto.replace('.', '\n')
-
-        # Manter apenas caracteres alfanuméricos, espaços e pontuação básica
-        texto = re.sub(r'[^\w\s.,!?]', '', texto)
-
-        return texto.strip()
-
-    def dividir_texto_tts(self, texto, limite=500):
-        """Divide o texto em blocos por sentenças conforme tts.py"""
-        import re
-
-        # Dividir por sentenças
-        sentencas = re.split(r'(?<=[.!?])\s+', texto)
-        blocos = []
-        bloco_atual = ""
-        for sent in sentencas:
-            sent = sent.strip()
-            if not sent:
-                continue
-            if len(bloco_atual) + len(sent) + 1 <= limite:
-                bloco_atual += " " + sent if bloco_atual else sent
-            else:
-                if bloco_atual:
-                    blocos.append(bloco_atual)
-                bloco_atual = sent
-        if bloco_atual:
-            blocos.append(bloco_atual)
-        return blocos
-
-    def generate_tts_thread(self):
-        """Thread para gerar TTS com XTTS v2 conforme tts.py"""
-        try:
-            import os
-            from pydub import AudioSegment
-
-            # Etapa 1: Carregar modelo se necessário
-            self.output_queue.put(("tts_progress", 5))
-            if not self.load_tts_model():
-                return
-
-            # Etapa 2: Preparar texto
-            self.output_queue.put(("tts_progress", 20))
-            self.output_queue.put(("tts_log", "Processando texto..."))
-
-            # Limpar o texto
-            texto_limpo = self.limpar_texto_tts(self.tts_text)
-
-            # Dividir em blocos
-            blocos = self.dividir_texto_tts(texto_limpo)
-            self.output_queue.put(("tts_log", f"Texto dividido em {len(blocos)} blocos"))
-
-            # Etapa 3: Gerar áudio para cada bloco
-            self.output_queue.put(("tts_progress", 40))
-            final_audio = AudioSegment.silent(duration=0)
-
-            for i, bloco in enumerate(blocos):
-                if not bloco.strip():
-                    continue
-
-                progress = 40 + (50 * (i + 1) // len(blocos))
-                self.output_queue.put(("tts_progress", progress))
-                self.output_queue.put(("tts_log", f"Gerando bloco {i+1}/{len(blocos)}..."))
-
-                # Gerar áudio do bloco
-                arquivo_temp = f"temp_tts_{i}.wav"
-                self.tts_model.tts_to_file(
-                    text=bloco,
-                    speaker="Damien Black",
-                    language="pt",
-                    file_path=arquivo_temp,
-                    speed=0.95
-                )
-
-                # Carregar e adicionar ao áudio final
-                audio_segment = AudioSegment.from_wav(arquivo_temp)
-                final_audio += audio_segment
-
-                # Adicionar pausa entre blocos (300ms)
-                if i < len(blocos) - 1:
-                    final_audio += AudioSegment.silent(duration=300)
-
-                # Remover arquivo temporário
-                if os.path.exists(arquivo_temp):
-                    os.remove(arquivo_temp)
-
-            # Etapa 4: Salvar áudio final
-            self.output_queue.put(("tts_progress", 95))
-            self.output_queue.put(("tts_log", f"Salvando arquivo final: {self.tts_output_file}"))
-
-            output_path = os.path.join(self.output_dir, self.tts_output_file)
-            final_audio.export(output_path, format="wav")
-
-            self.output_queue.put(("tts_progress", 100))
-            self.output_queue.put(("tts_log", f"TTS concluído! Arquivo salvo como: {output_path}"))
-            self.output_queue.put(("tts_complete", True))
-
-        except ImportError as ie:
-            self.output_queue.put(("tts_error", f"Bibliotecas necessárias não instaladas: {str(ie)}. Instale com: pip install TTS pydub"))
-        except Exception as e:
-            self.output_queue.put(("tts_error", f"Erro na geração de TTS: {str(e)}"))
-
-    def start_image_generation(self):
-        """Iniciar geração de imagem em thread separada"""
-        prompt = self.image_prompt_edit.toPlainText().strip()
-        if not prompt:
-            QMessageBox.warning(self, "Erro", "Digite um prompt para gerar a imagem.")
-            return
-
-        self.image_prompt = prompt
-        self.image_output_dir = self.image_output_entry.text().strip()
-
-        # Mostrar barra de progresso
-        self.image_progress.setVisible(True)
-        self.image_progress.setValue(0)
-        self.image_generate_btn.setEnabled(False)
-        self.image_log.clear()
-        self.image_log.append("Iniciando geração de imagem...")
-
-        # Iniciar thread de geração de imagem
-        thread = threading.Thread(target=self.generate_image_thread, daemon=True)
-        thread.start()
-
-    def set_image_device(self, device):
-        """Define o dispositivo para geração de imagens"""
-        self.image_device = device
-        # Resetar modelo se dispositivo mudou
-        if self.image_model_loaded and self.image_model is not None:
-            try:
-                del self.image_model
-                self.image_model = None
-                self.image_model_loaded = False
-            except:
-                pass
-
-    def load_image_model(self):
-        """Carrega o modelo Stable Diffusion XL se não estiver carregado"""
-        if self.image_model_loaded and self.image_model is not None:
-            return True
-
-        try:
-            from diffusers import StableDiffusionXLPipeline
-            import torch
-
-            self.output_queue.put(("image_log", f"Carregando Stable Diffusion XL no {self.image_device.upper()}..."))
-
-            # Configurar dispositivo
-            if self.image_device == "cuda" and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                device = "cuda"
-                torch_dtype = torch.float16
-            else:
-                device = "cpu"
-                torch_dtype = torch.float32
-
-            # Carregar modelo SDXL
-            model_name = "stabilityai/stable-diffusion-xl-base-1.0"
-            self.image_model = StableDiffusionXLPipeline.from_pretrained(
-                model_name,
-                torch_dtype=torch_dtype
-            ).to(device)
-
-            self.image_model_loaded = True
-            self.output_queue.put(("image_log", "Stable Diffusion XL carregado com sucesso!"))
-            return True
-
-        except Exception as e:
-            self.output_queue.put(("image_error", f"Erro ao carregar modelo de imagem: {str(e)}"))
-            return False
-
-    def generate_image_thread(self):
-        """Thread para gerar imagem com Stable Diffusion XL conforme img.py"""
-        try:
-            import os
-
-            # Criar pasta de imagens se não existir
-            os.makedirs("imagens", exist_ok=True)
-
-            # Etapa 1: Carregar modelo se necessário
-            self.output_queue.put(("image_progress", 5))
-            if not self.load_image_model():
-                return
-
-            # Etapa 2: Preparar geração
-            self.output_queue.put(("image_progress", 20))
-            self.output_queue.put(("image_log", f"Prompt: {self.image_prompt[:50]}..."))
-
-            # Etapa 3: Gerar imagem
-            self.output_queue.put(("image_progress", 40))
-            self.output_queue.put(("image_log", "Gerando imagem com Stable Diffusion XL..."))
-
-            # Gerar imagem conforme img.py
-            image = self.image_model(
-                self.image_prompt,
-                height=1080,         # altura 16:9
-                width=1920,         # largura 16:9
-                num_inference_steps=50,
-                guidance_scale=7.5
-            ).images[0]
-
-            # Etapa 4: Salvar imagem
-            self.output_queue.put(("image_progress", 90))
-            self.output_queue.put(("image_log", "Salvando imagem..."))
-
-            # Salvar na pasta imagens com nome sequencial
-            import random
-            image_number = random.randint(1, 1000)
-            output_filename = f"{image_number}.png"
-            output_path = os.path.join("imagens", output_filename)
-            image.save(output_path)
-
-            self.output_queue.put(("image_progress", 100))
-            self.output_queue.put(("image_log", f"Imagem gerada com sucesso! Salva como: imagens/{output_filename}"))
-            self.output_queue.put(("image_complete", True))
-
-        except Exception as e:
-            self.output_queue.put(("image_error", f"Erro na geração de imagem: {str(e)}"))
 
     def converter_video(self, tipo):
         # Implementar conversão
         pass
+
+    def setup_transcription_tab(self):
+        """Configurar aba de transcrição e legendas"""
+        transcription_widget = QWidget()
+        self.tab_widget.addTab(transcription_widget, "📝 Transcrição")
+
+        layout = QVBoxLayout(transcription_widget)
+
+        # Verificação de FFmpeg
+        ffmpeg_group = QGroupBox("🔧 Verificação de Dependências")
+        ffmpeg_layout = QVBoxLayout(ffmpeg_group)
+
+        self.ffmpeg_status_label = QLabel("Verificando FFmpeg...")
+        ffmpeg_layout.addWidget(self.ffmpeg_status_label)
+
+        check_ffmpeg_btn = QPushButton("🔍 Verificar FFmpeg")
+        check_ffmpeg_btn.clicked.connect(self.check_ffmpeg_status)
+        ffmpeg_layout.addWidget(check_ffmpeg_btn)
+
+        layout.addWidget(ffmpeg_group)
+
+        # Seleção de vídeo
+        video_group = QGroupBox("📹 Arquivo de Vídeo")
+        video_layout = QVBoxLayout(video_group)
+
+        self.transcription_video_entry = QLineEdit()
+        self.transcription_video_entry.setPlaceholderText("Selecione um vídeo para transcrição...")
+        video_layout.addWidget(self.transcription_video_entry)
+
+        browse_transcription_btn = QPushButton("📂 Navegar")
+        browse_transcription_btn.clicked.connect(self.browse_transcription_video)
+        video_layout.addWidget(browse_transcription_btn)
+
+        layout.addWidget(video_group)
+
+        # Configurações de transcrição
+        config_group = QGroupBox("⚙️ Configurações de Transcrição")
+        config_layout = QFormLayout(config_group)
+
+        self.transcription_model_combo = QComboBox()
+        self.transcription_model_combo.addItems(["tiny", "base", "small", "medium", "large"])
+        self.transcription_model_combo.setCurrentText("base")
+        config_layout.addRow("Modelo Whisper:", self.transcription_model_combo)
+
+        self.transcription_gpu_check = QCheckBox("Usar GPU (CUDA)")
+        config_layout.addRow(self.transcription_gpu_check)
+
+        layout.addWidget(config_group)
+
+        # Botão de transcrição
+        self.transcription_btn = QPushButton("🎤 Iniciar Transcrição")
+        self.transcription_btn.clicked.connect(self.start_transcription)
+        layout.addWidget(self.transcription_btn)
+
+        # Progress e status
+        self.transcription_progress = QProgressBar()
+        layout.addWidget(self.transcription_progress)
+
+        self.transcription_status_label = QLabel("Aguardando...")
+        layout.addWidget(self.transcription_status_label)
+
+        # Resultados da transcrição
+        results_group = QGroupBox("📋 Resultados da Transcrição")
+        results_layout = QVBoxLayout(results_group)
+
+        # Área de texto para segmentos
+        self.transcription_segments_text = QTextEdit()
+        self.transcription_segments_text.setPlaceholderText("Os segmentos transcritos aparecerão aqui...")
+        results_layout.addWidget(self.transcription_segments_text)
+
+        # Botões de exportação
+        export_layout = QHBoxLayout()
+
+        copy_srt_btn = QPushButton("📄 Copiar SRT")
+        copy_srt_btn.clicked.connect(self.copy_srt)
+        export_layout.addWidget(copy_srt_btn)
+
+        copy_ass_btn = QPushButton("🎭 Copiar ASS")
+        copy_ass_btn.clicked.connect(self.copy_ass)
+        export_layout.addWidget(copy_ass_btn)
+
+        copy_text_btn = QPushButton("📝 Copiar Texto Puro")
+        copy_text_btn.clicked.connect(self.copy_plain_text)
+        export_layout.addWidget(copy_text_btn)
+
+        results_layout.addLayout(export_layout)
+        layout.addWidget(results_group)
+
+        # Renderização com legendas
+        render_group = QGroupBox("🎬 Renderizar com Legendas")
+        render_layout = QFormLayout(render_group)
+
+        self.render_quality_combo = QComboBox()
+        self.render_quality_combo.addItems(["4K 30fps", "1080p 60fps", "1080p 30fps", "720p 60fps", "720p 30fps", "480p 30fps"])
+        self.render_quality_combo.setCurrentText("1080p 30fps")
+        render_layout.addRow("Qualidade:", self.render_quality_combo)
+
+        render_layout.addRow(self.transcription_gpu_check)
+
+        render_video_btn = QPushButton("🎬 Renderizar Vídeo")
+        render_video_btn.clicked.connect(self.start_video_render)
+        render_layout.addRow(render_video_btn)
+
+        self.render_status_label = QLabel("Aguardando...")
+        render_layout.addRow("Status:", self.render_status_label)
+
+        layout.addWidget(render_group)
+
+        # Verificar FFmpeg ao abrir a aba
+        QTimer.singleShot(100, self.check_ffmpeg_status)
+
+    def check_ffmpeg_status(self):
+        """Verificar status do FFmpeg"""
+        self.ffmpeg_status_label.setText("Verificando FFmpeg...")
+        QApplication.processEvents()
+
+        ffmpeg_ok, ffmpeg_msg = transcription.check_ffmpeg()
+        if ffmpeg_ok:
+            self.ffmpeg_status_label.setText(f"✅ FFmpeg OK: {ffmpeg_msg}")
+        else:
+            self.ffmpeg_status_label.setText(f"❌ FFmpeg: {ffmpeg_msg}")
+
+    def browse_transcription_video(self):
+        """Navegar para selecionar vídeo para transcrição"""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Selecionar Vídeo", "", "Vídeos (*.mp4 *.avi *.mkv *.mov)")
+        if file_path:
+            self.transcription_video_entry.setText(file_path)
+            self.transcription_video_path = file_path
+
+    def start_transcription(self):
+        """Iniciar transcrição"""
+        transcription.start_transcription(self)
+
+    def display_transcription_results(self, segments):
+        """Exibir resultados da transcrição"""
+        result_text = ""
+        for i, segment in enumerate(segments, 1):
+            start_time = transcription.format_timestamp(segment['start'])
+            end_time = transcription.format_timestamp(segment['end'])
+            text = segment['text'].strip()
+
+            result_text += f"{i}. [{start_time} --> {end_time}]\n{text}\n\n"
+
+        self.transcription_segments_text.setText(result_text)
+
+    def copy_srt(self):
+        """Copiar legenda em formato SRT"""
+        if not self.transcription_segments:
+            QMessageBox.warning(self, "Aviso", "Execute a transcrição primeiro!")
+            return
+
+        srt_content = transcription.generate_srt(self.transcription_segments)
+        QApplication.clipboard().setText(srt_content)
+        QMessageBox.information(self, "Sucesso", "Legenda SRT copiada para a área de transferência!")
+
+    def copy_ass(self):
+        """Copiar legenda em formato ASS"""
+        if not self.transcription_segments:
+            QMessageBox.warning(self, "Aviso", "Execute a transcrição primeiro!")
+            return
+
+        ass_content = transcription.generate_ass(self.transcription_segments)
+        QApplication.clipboard().setText(ass_content)
+        QMessageBox.information(self, "Sucesso", "Legenda ASS copiada para a área de transferência!")
+
+    def copy_plain_text(self):
+        """Copiar texto puro da transcrição"""
+        if not self.transcription_text:
+            QMessageBox.warning(self, "Aviso", "Execute a transcrição primeiro!")
+            return
+
+        QApplication.clipboard().setText(self.transcription_text)
+        QMessageBox.information(self, "Sucesso", "Texto puro copiado para a área de transferência!")
+
+    def start_video_render(self):
+        """Iniciar renderização de vídeo com legendas"""
+        transcription.start_video_render(self)
 
     def check_queue(self):
         """Verificar fila de mensagens das threads usando QTimer"""
@@ -1305,7 +892,7 @@ class ClipGeneratorGUI(QMainWindow):
 
     def run(self):
         self.show()
-
+        self.resize(1280, 720)
 
 def main():
     # Verificar se é um teste de importação
@@ -1319,12 +906,6 @@ def main():
                 elif module_name == "torch":
                     import torch
                     print(f"Torch importado com sucesso - CUDA: {torch.cuda.is_available()}")
-                elif module_name == "tts":
-                    from TTS.api import TTS
-                    print("TTS importado com sucesso")
-                elif module_name == "diffusers":
-                    from diffusers import StableDiffusionXLPipeline
-                    print("Diffusers importado com sucesso")
                 elif module_name == "whisper":
                     import whisper
                     print("Whisper importado com sucesso")
@@ -1342,6 +923,9 @@ def main():
         else:
             print("Uso: --test-import <modulo>")
             sys.exit(1)
+
+    # Importar PyQt5 aqui para garantir que seja carregado no contexto do executável
+    from PyQt5.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
     window = ClipGeneratorGUI()

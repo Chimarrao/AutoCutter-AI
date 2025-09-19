@@ -1,24 +1,14 @@
+# Dependências básicas (sempre incluídas no executável)
 customtkinter
 yt-dlp
 ffmpeg-python
 requests
 google-generativeai
-openai-whisper
 moviepy
 sponsorblock
-opencv-python
 pytube
-torch
-numpy
-pandas
 pyqt5
 tqdm
-pillow
 gtts
-diffusers
-transformers
-TTS
 pydub
-diffusers
-transformers
 pyinstaller
