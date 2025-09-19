@@ -17,15 +17,11 @@ import json
 
 import queue
 
-# Adicionar src ao pathimport tempfile
-
+# Adicionar src ao path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-import re
 
-import yt_dlp
-
+# Importar e executar a função main do GUI
 from gui.gui import main
-import urllib.parse
 
 import unicodedata
 

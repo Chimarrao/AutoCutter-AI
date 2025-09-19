@@ -2,7 +2,10 @@
 *.mkv
 *.webm
 *.TTF
+*.exe
 /.venv/
 .idea
 *.wav
+src/__pycache__/
+src/gui/__pycache__/
 user_config.json
